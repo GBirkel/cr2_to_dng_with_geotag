@@ -14,9 +14,9 @@ This script does the following:
 
 Before using:
 
-brew install exiftool
-pip install gpxpy
-Download and install Adobe DNG Converter (https://supportdownloads.adobe.com/detail.jsp?ftpID=6319)
+* `brew install exiftool`
+* `pip install gpxpy`
+* Download and install Adobe DNG Converter (https://supportdownloads.adobe.com/detail.jsp?ftpID=6319)
 
 References:
 
