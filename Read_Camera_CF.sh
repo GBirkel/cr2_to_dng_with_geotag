@@ -92,7 +92,7 @@ def get_exif_bits_from_file(file_pathname):
 	df = re.sub(':', '-', d)
 	tf = re.sub('[:\.]', '', t)
 
-	has_gps = "Void" in gps_stat_out
+	has_gps = "Active" in gps_stat_out
 
 	file_name = file_pathname.split('/')[-1]
 	file_name_no_ext = ''.join(file_name.split('.')[0:-1])
@@ -221,7 +221,9 @@ if len(gpx_list) < 1:
 	exit()
 print "Found " + str(len(gpx_list)) + " GPX files."
 
-
+# Fetch EXIF data for any DNGs that we haven't already
+# (That would be all the DNGs that were in the target folder already
+#  and didn't have filenames matching CR2s)
 additional_exif_fetches = 0
 for dng_file in dng_list:
 	if not target_file_exif_data.has_key(dng_file):
@@ -238,8 +240,19 @@ for dng_file in dng_list:
 if additional_exif_fetches > 0:
     print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files."
 
+# Filter out DNGs with valid GPS data in their EXIF tags.
+dngs_without_gps = []
+for dng_file in dng_list:
+	if not target_file_exif_data[dng_file]['has_gps']:
+		dngs_without_gps.append(dng_file)
+if len(dngs_without_gps) < 1:
+   	print "All DNG files have GPS tags.  Skipping geotag stage."
+	exit()
+print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
 
+# Parse the GPX files to find their earliest timepoint and latest timepoint.
 gpx_files_stats = {}
+valid_gps_files = []
 for gpx_file in gpx_list:
     earliest_start = datetime.max
     latest_end = datetime.min
@@ -261,12 +274,25 @@ for gpx_file in gpx_list:
 		stats['start'] = earliest_start
 		stats['end'] = latest_end
 		gpx_files_stats[gpx_file] = stats
+		valid_gps_files.append(gpx_file)
 
 	print gpx_file + ":\t  Start: " + datetime_to_str(earliest_start) + "   End: " + \
             datetime_to_str(latest_end) + diags
 
+if len(valid_gps_files) < 1:
+   	print "No GPX files have valid date ranges.  Skipping geotag stage."
+	exit()
 
-# TODO:  find those without gps, attempt tag
+for dng_file in dngs_without_gps:
+	xf = target_file_exif_data[dng_file]	
+	gpx_files_in_range = []
+	for gpx_file in valid_gps_files:
+		stats = gpx_files_stats[gpx_file]
+    	
+
+
+
+# TODO:  find compatible ranges, attempt tag
 
 
 print "Done."
