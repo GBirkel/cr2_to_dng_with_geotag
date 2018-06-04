@@ -15,6 +15,7 @@ from datetime import datetime
 
 cardpath = "/Volumes/EOS_DIGITAL"
 outfolder = "/Users/gbirkel/Pictures/DNG_RAW_In"
+archivefolder = cardpath + "/archived"
 
 gps_files_folder = "/Users/gbirkel/Documents/GPS/"	# For finding .gpx files to assign geotags from
 
@@ -34,7 +35,16 @@ if not os.path.isdir(outfolder):
 if not os.path.isdir(cardpath):
 	print "Cannot find card path " + cardpath + " ."
 	exit()
+
 print "Found card path."
+
+if not os.path.isdir(archivefolder):
+	mkdir_out = subprocess.check_output("mkdir \"" + archivefolder + "\"", shell=True) 
+	if not os.path.isdir(archivefolder):
+		print "Cannot create image archive path " + cardpath + " ."
+		exit()
+	else:
+		print "Created image archive path " + cardpath + " ."
 
 
 # Look for CR2 files on the card
@@ -92,7 +102,7 @@ for gpx_file in gpx_files_list:
 	diags = ''
 	# If the range looks funny, print a notice.  Otherwise, save the file and range in a dictionary.
 	if earliest_start.year < 1980 or earliest_start.year > 2030 or latest_end.year < 1980 or latest_end.year > 2030:
-		diags = '   (Bad range, won\'t use.)'
+		diags = "   (Bad range, won\'t use.)"
 	else:
 		stats = {}
 		stats['start'] = earliest_start
@@ -116,21 +126,23 @@ def get_exif_bits_from_file(file_pathname):
 
 	has_gps = "Void" in gps_stat_out
 
-	filename_no_ext = ''.join(file_pathname.split('/')[-1].split('.')[0:-1])
+	filename = file_pathname.split('/')[-1]
+	filename_no_ext = ''.join(filename.split('.')[0:-1])
 
 	exif_d['full_date'] = df + " " + t
 	exif_d['form_date'] = df + "-" + tf
 	exif_d['has_gps'] = has_gps
+	exif_d['filename'] = filename
 	exif_d['filename_no_ext'] = filename_no_ext
 
 	return exif_d
 
 
 all_exif_data = {}
+target_file_exif_data = {}
 
 already_processed = []
-processed_with_gps = []
-processed_added_gps = []
+newly_processed = []
 
 for original in files_list:
 
@@ -142,30 +154,26 @@ for original in files_list:
 	xf['target_file_pathname'] = outfolder + "/" + target_file
 	xf['gps_added'] = False
 
-	# If the target file exists AND the datestamp matches exactly when we extract the EXIF data,
+	# If the target file exists AND the datestamp in the EXIF matches exactly,
 	# consider this file already processed.
 	xf['target_exif'] = {}
 	if not os.path.exists(xf['target_file_pathname']):
 		xf['target_exists'] = False
 		xf['already_converted'] = False
 	else:
+		txf = get_exif_bits_from_file(xf['target_file_pathname'])
 		xf['target_exists'] = True
-		xf['target_exif'] = get_exif_bits_from_file(xf['target_file_pathname'])
+		xf['target_exif'] = txf
 		xf['already_converted'] = xf['target_exif']['form_date'] == xf['form_date']
+		# Save this for later so we don't have to read it twice
+		target_file_exif_data[xf['target_file_pathname']] = txf
 
 	print xf['filename_no_ext'] + ":   Date: " + xf['full_date'] + "   Has GPS: " + str(xf['has_gps']) + "\tAlready Processed: " + str(xf['already_converted'])
 
 	if xf['already_converted']:
 		already_processed.append(original)
 	else:
-
-		if not xf['has_gps']:
-			source_file = original
-			processed_added_gps.append(original)
-		else:
-			source_file = original
-			processed_with_gps.append(original)
-
+		newly_processed.append(original)
 		conv_args = [
 			'-c',		# Lossless compression
 			'-p1',		# Medium preview
@@ -176,7 +184,7 @@ for original in files_list:
 			"\"" + outfolder + "\"",
 			'-o',		# Output file
 			"\"" + xf['target_file_name'] + "\"",
-			"\"" + source_file + "\""	# Input file is last
+			"\"" + original + "\""	# Input file is last
 		]
 
 		# -j : Launch the app hidden
@@ -186,12 +194,25 @@ for original in files_list:
 		# --args : Everything beyond here should be passed to the application
 		conv_command = "open -j -n -W -a \"" + dngconverter + "\" --args " + ' '.join(conv_args)
 
-		#dng_conv_output = subprocess.check_output(conv_command, shell=True)
+		dng_conv_output = subprocess.check_output(conv_command, shell=True)
 
 	all_exif_data[original] = xf
 
 print "Already verified processed: " + str(len(already_processed))
-print "Processed with GPS already present: " + str(len(processed_with_gps))
-print "Processed and attempted added GPS: " + str(len(processed_added_gps))
+print "Processed: " + str(len(newly_processed))
+
+to_move = already_processed + newly_processed
+
+for original in to_move:
+	xf = all_exif_data[original]
+	mv_cmd = 'mv "' + original + '" "' + archivefolder + '\' + xf['filename'] + '"'
+	print mv_cmd
+	mv_out = subprocess.check_output(mv_cmd, shell=True) 
+
+print "Moved to archive folder: " + str(len(to_move))
+
+# TODO: Read EXIF for all DNG In target, fold into list, find those without gps, attempt tag
+#		target_file_exif_data[xf['target_file_pathname']] = txf
+
 
 print "Done."

@@ -20,9 +20,9 @@ Before using:
 
 References:
 
-http://wwwimages.adobe.com/www.adobe.com/content/dam/acom/en/products/photoshop/pdfs/dng_commandline.pdf
-https://www.awaresystems.be/imaging/tiff/tifftags/privateifd/exif.html
-https://sno.phy.queensu.ca/~phil/exiftool/geotag.html
-https://www.sno.phy.queensu.ca/~phil/exiftool/faq.html
-https://github.com/guinslym/pyexifinfo
-https://github.com/tkrajina/gpxpy
+* http://wwwimages.adobe.com/www.adobe.com/content/dam/acom/en/products/photoshop/pdfs/dng_commandline.pdf
+* https://www.awaresystems.be/imaging/tiff/tifftags/privateifd/exif.html
+* https://sno.phy.queensu.ca/~phil/exiftool/geotag.html
+* https://www.sno.phy.queensu.ca/~phil/exiftool/faq.html
+* https://github.com/guinslym/pyexifinfo
+* https://github.com/tkrajina/gpxpy
