@@ -5,21 +5,19 @@ import subprocess
 import gpxpy
 from datetime import datetime
 
-# TODO: Convery all to DNG in a first step (skipping if needed)
-# then move/delete
-# then do the gps/gpx check
-
 #
 # Customize before using:
 #
 
-cardpath = "/Volumes/EOS_DIGITAL"
-outfolder = "/Users/gbirkel/Pictures/DNG_RAW_In"
-archivefolder = cardpath + "/archived"
+garmin_gps_volume = "/Volumes/GARMIN"
+card_volume = "/Volumes/EOS_DIGITAL"
+card_archive_folder = card_volume + "/archived"
 
-gps_files_folder = "/Users/gbirkel/Documents/GPS"	# For finding .gpx files to assign geotags from
+dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"	# For DNG files converted from CR2 files
+gps_files_folder = "/Users/gbirkel/Documents/GPS"	# For GPX files from the GPS, to use for assigning geotags
 
 exiftool = "/usr/local/bin/exiftool"
+gpsbabel = "/usr/local/bin/gpsbabel"
 dngconverter = "/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter"
 
 
@@ -29,22 +27,12 @@ if not os.path.exists(dngconverter):
 if not os.path.exists(exiftool):
 	print "Install exiftool with \"brew install exiftool\", please."
 	exit()
-if not os.path.isdir(outfolder):
-	print "Cannot find file out path " + outfolder + " ."
+if not os.path.exists(gpsbabel):
+	print "Install gpsbabel with \"brew install gpsbabel\", please."
 	exit()
-if not os.path.isdir(cardpath):
-	print "Cannot find card path " + cardpath + " ."
+if not os.path.isdir(dng_folder):
+	print "Cannot find file out path " + dng_folder + " ."
 	exit()
-
-print "Found card path."
-
-if not os.path.isdir(archivefolder):
-	mkdir_out = subprocess.check_output("mkdir \"" + archivefolder + "\"", shell=True) 
-	if not os.path.isdir(archivefolder):
-		print "Cannot create image archive path " + archivefolder + " ."
-		exit()
-	else:
-		print "Created image archive path " + archivefolder + " ."
 
 
 # Support function to look for files on a given path
@@ -60,13 +48,10 @@ def look_for_files(p):
 
 # Support function to pretty-print dates that datetime can't handle
 def datetime_to_str(t):
-
 	# Code loosely adapted from Perl's HTTP-Date
 	MoY = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-
 	mon = t.month - 1
 	date_str = '%04d-%s-%02d' % (t.year, MoY[mon], t.day)
-
 	hour = t.hour
 	half_day = 'am'
 	if hour > 11:
@@ -91,7 +76,8 @@ def get_exif_bits_from_file(file_pathname):
 	d, t = full_date.split(" ")
 	df = re.sub(':', '-', d)
 	tf = re.sub('[:\.]', '', t)
-
+	# Frustrating that there is no time zone available in this data
+	full_date_as_datetime = datetime.strptime(full_date, "%Y:%m:%d %H:%M:%S.%f")
 	has_gps = "Active" in gps_stat_out
 
 	file_name = file_pathname.split('/')[-1]
@@ -106,13 +92,50 @@ def get_exif_bits_from_file(file_pathname):
 	return exif_d
 
 
-# Look for CR2 files on the card
-files_list = look_for_files(cardpath + "/DCIM/*/*.CR2")
+if os.path.exists(garmin_gps_volume):
+	print "Found GPS path."
+	fit_files = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")
+	if len(fit_files) > 0:
+		for fit_file in fit_files:
+			base_name = fit_file.split('/')[-1]
+			base_name_no_ext = ''.join(base_name.split('.')[0:-1])
+			print fit_file
+			gpsbabel_args = [
+				'-i garmin_fit',		# Input format
+				'-f',					# Input file
+				fit_file,
+				'-x track,pack,split=4h,title="LOG # %c"',	# Split activities if gap is larger than 4 hours
+				'-o gpx',				# Output format
+				'-F',					# Output file
+				'"' + gps_files_folder + '/' + base_name_no_ext + '.gpx"'
+			]
+			fit_convert_cmd = gpsbabel + " " + ' '.join(gpsbabel_args)
+			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
+			mv_out = subprocess.check_output("mv \"" + fit_file + "\" \"" + fit_file + "-read\"", shell=True)
+		print "Converted " + str(len(fit_files)) + " FIT files to GPX."
 
-if len(files_list) > 0:
-	print "Found " + str(len(files_list)) + " CR2 files."
+
+# If there is a card path, make sure the archive folder exists on it, and look for CR2 files.
+if not os.path.isdir(card_volume):
+	print "Cannot find card volume " + card_volume + " .  Skipping import stage."
+	files_list = []
 else:
-	print "No CR2 files found on card.  Skipping import stage."
+	print "Found card path."
+	# Make sure the archive folder on the card exists
+	if not os.path.isdir(card_archive_folder):
+		mkdir_out = subprocess.check_output("mkdir \"" + card_archive_folder + "\"", shell=True)
+		if not os.path.isdir(card_archive_folder):
+			print "Cannot create image archive path " + card_archive_folder + " ."
+			exit()
+		else:
+			print "Created image archive path " + card_archive_folder + " ."
+
+	# Look for CR2 files on the card
+	files_list = look_for_files(card_volume + "/DCIM/*/*.CR2")
+	if len(files_list) > 0:
+		print "Found " + str(len(files_list)) + " CR2 files."
+	else:
+		print "No CR2 files found on card.  Skipping import stage."
 
 
 # Save any target file EXIF data we read for later so we don't need to read it twice.
@@ -131,7 +154,7 @@ if len(files_list) > 0:
 		target_file = xf['form_date'] + "_" + xf['file_name_no_ext'] + ".dng"
 
 		xf['target_file_name'] = target_file
-		xf['target_file_pathname'] = outfolder + "/" + target_file
+		xf['target_file_pathname'] = dng_folder + "/" + target_file
 		xf['gps_added'] = False
 
 		# If the target file exists AND the datestamp in the EXIF matches exactly,
@@ -163,6 +186,7 @@ if len(files_list) > 0:
 			already_processed.append(original)
 		else:
 			newly_processed.append(original)
+			# DNG converter command line arguments
 			conv_args = [
 				'-c',		# Lossless compression
 				'-p1',		# Medium preview
@@ -170,12 +194,13 @@ if len(files_list) > 0:
 				'-cr7.1',	# Camera Raw v7.1 and up compatible (works with Aperture)
 				'-dng1.4',	# DNG file format 1.4 and up compatible (works with Aperture)
 				'-d',		# Output directory
-				"\"" + outfolder + "\"",
+				"\"" + dng_folder + "\"",
 				'-o',		# Output file
 				"\"" + xf['target_file_name'] + "\"",
 				"\"" + original + "\""	# Input file is last
 			]
 
+			# "open" command arguments, for launching the DNG converter.
 			# -j : Launch the app hidden
 			# -n : Open a new instance of the application even if one is already running
 			# -W : Block and wait for the application to exit
@@ -199,7 +224,7 @@ if len(files_list) > 0:
 	for original in to_move:
 		xf = all_exif_data[original]
 		orig_file_name = xf['file_name']
-		archive_pathname = archivefolder + "/" + orig_file_name
+		archive_pathname = card_archive_folder + "/" + orig_file_name
 		mv_cmd = 'mv "' + original + '" "' + archive_pathname + '"'
 		print mv_cmd
 		mv_out = subprocess.check_output(mv_cmd, shell=True) 
@@ -209,7 +234,7 @@ if len(files_list) > 0:
 
 # Look for DNG files in the target folder
 
-dng_list = look_for_files(outfolder + "/*.dng")
+dng_list = look_for_files(dng_folder + "/*.dng")
 if len(dng_list) < 1:
 	print "No DNG files found in target folder.  Skipping geotag stage."
 	exit()
@@ -288,6 +313,7 @@ for dng_file in dngs_without_gps:
 	gpx_files_in_range = []
 	for gpx_file in valid_gps_files:
 		stats = gpx_files_stats[gpx_file]
+		#if xf['']
     	
 
 

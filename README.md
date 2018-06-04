@@ -38,6 +38,7 @@ This script is only compatible with MacOS but perhaps it can serve as a referenc
 Before using:
 
 * `brew install exiftool`
+* `brew install gpsbabel`
 * `pip install gpxpy`
 * Download and install Adobe DNG Converter (https://supportdownloads.adobe.com/detail.jsp?ftpID=6319)
 
