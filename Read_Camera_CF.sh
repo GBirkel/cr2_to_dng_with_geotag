@@ -3,7 +3,7 @@
 import os, sys, re
 import subprocess
 import gpxpy
-from datetime import datetime
+from datetime import datetime, tzinfo, timedelta
 
 #
 # Customize before using:
@@ -46,8 +46,48 @@ def look_for_files(p):
 	return files_list
 
 
+# Subclass of tzinfo swiped mostly from dateutil
+class fancytzoffset(tzinfo):
+    def __init__(self, name, offset):
+        self._name = name
+        self._offset = timedelta(seconds=offset)
+    def utcoffset(self, dt):
+        return self._offset
+    def dst(self, dt):
+        return timedelta(0)
+    def tzname(self, dt):
+        return self._name
+    def __eq__(self, other):
+        return (isinstance(other, fancytzoffset) and self._offset == other._offset)
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    def __repr__(self):
+        return "%s(%s, %s)" % (self.__class__.__name__,
+                               repr(self._name),
+                               self._offset.days*86400+self._offset.seconds)
+    __reduce__ = object.__reduce__
+
+
+# Variant tzinfo subclass for UTC pulled from GPX logs
+class fancytzutc(tzinfo):
+    def utcoffset(self, dt):
+        return timedelta(0)
+    def dst(self, dt):
+        return timedelta(0)
+    def tzname(self, dt):
+        return "UTC"
+    def __eq__(self, other):
+        return (isinstance(other, fancytzutc) or
+                (isinstance(other, fancytzoffset) and other._offset == timedelta(0)))
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    def __repr__(self):
+        return "%s()" % self.__class__.__name__
+    __reduce__ = object.__reduce__
+
+
 # Support function to pretty-print dates that datetime can't handle
-def datetime_to_str(t):
+def pretty_datetime(t):
 	# Code loosely adapted from Perl's HTTP-Date
 	MoY = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 	mon = t.month - 1
@@ -60,30 +100,76 @@ def datetime_to_str(t):
 		hour = hour - 12
 	elif hour == 0:
 		hour = 12
-	time_str = '%02d:%02d%s' % (hour, t.minute, half_day)	
+	u = t.tzname()
+	u_str = ''
+	if u is not None:
+		u_str = ' ' + u
+	time_str = '%02d:%02d%s' % (hour, t.minute, half_day)
 
-	return date_str + ', ' + time_str
+	return date_str + ' ' + time_str + u_str
 
 
 # Support function to invoke exiftool and pull out and parse two major pieces of data:
 # The creation date from the camera, and the active status of the GPS device in the camera while shooting.
 def get_exif_bits_from_file(file_pathname):
 	gps_stat_out = subprocess.check_output(
-		exiftool + " -a -s -GPSStatus -SubSecCreateDate " + file_pathname, shell=True)
+		exiftool + " -a -s -GPSStatus -TimeZone -SubSecCreateDate " + file_pathname, shell=True)
 	exif_d = {}
 
-	full_date = gps_stat_out.split('SubSecCreateDate')[1].strip(' \t\n\r:')
-	d, t = full_date.split(" ")
+	parts = gps_stat_out.split('SubSecCreateDate')
+	full_date_tag = parts[1].strip(' \t\n\r:')
+	d, t = full_date_tag.split(" ")
 	df = re.sub(':', '-', d)
 	tf = re.sub('[:\.]', '', t)
-	# Frustrating that there is no time zone available in this data
-	full_date_as_datetime = datetime.strptime(full_date, "%Y:%m:%d %H:%M:%S.%f")
+
+	parts_b = parts[0].split('TimeZone')
+	time_zone_tag = parts_b[1].strip(' \t\n\r:')
+
+	# Parse the non-time-zone portion of the date string.
+	# This is the easy part.
+	# Most of the rest of this function is for taking the time zone into account.
+	full_date_as_datetime = datetime.strptime(full_date_tag[:22], "%Y:%m:%d %H:%M:%S.%f")
+
+	# This is where the difference in Canon firmware as mentioned in the REAME comes into play.
+
+	# We will key off the length of the SubSecCreateDate tag to determine what to do.
+	if len(full_date_tag) > 22:
+		# Seems to have time zone info.  Isolate it so it works with our parser. 
+		tz_to_parse = full_date_tag[22:]
+	else:
+		# Not long enough to have time zone info.  Use the TimeZone tag.
+		tz_to_parse = time_zone_tag
+
+	# Parse the time zone offset string into an offset in seconds
+	# (Code adapted from dateutil.)
+	tz_to_parse = tz_to_parse.strip()
+	tz_as_offset = 0
+	tz_without_modifier = tz_to_parse
+	if tz_to_parse[0] in ('+', '-'):
+		signal = (-1, +1)[tz_to_parse[0] == '+']
+		tz_without_modifier = tz_to_parse[1:]
+	else:
+		signal = +1
+	tz_without_modifier = re.sub(':', '', tz_without_modifier)
+	if len(tz_without_modifier) == 4:
+		tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:])*60) * signal
+	elif len(s) == 6:
+		tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:4])*60 + int(tz_without_modifier[4:])) * signal
+
+	# Create an object of a tzinfo-derived class to hold the time zone info,
+	# as required by datetime.
+	tz_offset_tzinfo = fancytzoffset(tz_to_parse, tz_as_offset)
+
+	# Replace the time zone info object with our own
+	full_date_as_datetime = full_date_as_datetime.replace(tzinfo=tz_offset_tzinfo)
+
 	has_gps = "Active" in gps_stat_out
 
 	file_name = file_pathname.split('/')[-1]
 	file_name_no_ext = ''.join(file_name.split('.')[0:-1])
 
 	exif_d['full_date'] = df + " " + t
+	exif_d['full_date_as_datetime'] = full_date_as_datetime
 	exif_d['form_date'] = df + "-" + tf
 	exif_d['has_gps'] = has_gps
 	exif_d['file_name'] = file_name
@@ -180,7 +266,7 @@ if len(files_list) > 0:
 		else:
 			already_conv_str = "                     "
 
-		print xf['file_name_no_ext'] + ":   Date: " + xf['full_date'] + has_gps_str + already_conv_str
+		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['full_date_as_datetime']) + has_gps_str + already_conv_str
 
 		if xf['already_converted']:
 			already_processed.append(original)
@@ -258,7 +344,7 @@ for dng_file in dng_list:
 			has_gps_str = "   Has GPS "
 		else:
 			has_gps_str = "           "
-		print xf['file_name_no_ext'] + ":   Date: " + xf['full_date'] + has_gps_str
+		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['full_date_as_datetime']) + has_gps_str
 
 		target_file_exif_data[dng_file] = xf
 		additional_exif_fetches = additional_exif_fetches + 1
@@ -296,13 +382,18 @@ for gpx_file in gpx_list:
 		diags = "   (Bad range, won\'t use.)"
 	else:
 		stats = {}
+		tz_utc = fancytzutc()
+		earliest_start = earliest_start.replace(tzinfo=tz_utc)
+		latest_end = latest_end.replace(tzinfo=tz_utc)
+		# Create an object of a tzinfo-derived class to hold the time zone info,
+		# as required by datetime.
 		stats['start'] = earliest_start
 		stats['end'] = latest_end
 		gpx_files_stats[gpx_file] = stats
 		valid_gps_files.append(gpx_file)
 
-	print gpx_file + ":\t  Start: " + datetime_to_str(earliest_start) + "   End: " + \
-            datetime_to_str(latest_end) + diags
+	print gpx_file + ":\t  Start: " + pretty_datetime(earliest_start) + "   End: " + \
+            pretty_datetime(latest_end) + diags
 
 if len(valid_gps_files) < 1:
    	print "No GPX files have valid date ranges.  Skipping geotag stage."

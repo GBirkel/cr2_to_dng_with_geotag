@@ -6,7 +6,9 @@ I own a Canon EOS 5D Mark IV, which supposedly has set-and-forget geotagging, bu
 
 I recommend creating an Automator action to run this script, so you can just plug in the media card and click the action.
 
-This script does the following:
+***
+
+## This script does the following:
 
 1. Check for required tools
 2. Verify that needed folders are present
@@ -24,7 +26,7 @@ If there are DNG files in the target folder, from this run or an earlier one:
 
 9. Find any that are missing EXIF geotag data 
 10. Look for GPX data files from a GPS in a given folder
-11. Check if any GPX data overlaps with the capture time of any images
+11. Check if any GPX data overlaps with the capture time of any images (using the time-zone corrected date)
 12. If so, geotag the image
 
 The idea is to make this script usable in several situations:
@@ -35,14 +37,29 @@ The idea is to make this script usable in several situations:
 
 This script is only compatible with MacOS but perhaps it can serve as a reference for others developing on other platforms.  I have tried to avoid most Python-isms in the code to leave it relatively adaptable to other languages.
 
-Before using:
+***
+
+## Before using:
 
 * `brew install exiftool`
 * `brew install gpsbabel`
 * `pip install gpxpy`
 * Download and install Adobe DNG Converter (https://supportdownloads.adobe.com/detail.jsp?ftpID=6319)
 
-References:
+***
+
+### About Time Zones:
+
+Canon 5DS Mk IV firmware prior to 1.1.2 does not embed enough EXIF info for exiftool to extract the time zone directly.  But, it does provide an extended `-TimeZone` tag that we can read and use to construct an equivalent string ourselves.  Newer firmware corrects this by embedding a time zone offset directly into the `-SubSecCreateDate` tag.
+
+* Canon firmware 1.0.4 SubSecCreateDate tag example: "`2018:06:03 16:44:52.81`"
+* Canon firmware 1.1.2 SubSecCreateDate tag example: "`2018:06:04 00:47:16.69-07:00`"
+
+This script deals with CR2 files from either kind of firmware, but nevertheless, you should [upgrade your Mk IV](https://www.usa.canon.com/internet/portal/us/home/support/details/cameras/dslr/eos-5d-mark-iv?subtab=downloads-firmware) if you haven't already.
+
+***
+
+#### References:
 
 * http://wwwimages.adobe.com/www.adobe.com/content/dam/acom/en/products/photoshop/pdfs/dng_commandline.pdf
 * https://www.awaresystems.be/imaging/tiff/tifftags/privateifd/exif.html
