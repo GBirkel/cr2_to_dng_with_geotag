@@ -1,41 +1,45 @@
 # Canon RAW to DNG, with geotag gap-filling, a.k.a. cr2_to_dng_with_geotag
 
-This is a Python script to find Canon Raw image files (CR2 files) on a media card and convert them to DNG, adding geotag information from GPX files on the way, ONLY if the given image does not already contain geotag data from the camera itself.
+This is a Python script that does the following:
 
-I own a Canon EOS 5D Mark IV, which supposedly has set-and-forget geotagging, but the GPS is not very strong and will forget where it is when the camera is powered down.  So I carry around a Garmin Edge 500 as a backup, which is tiny, more accurate, and lasts all day.  I use another script to convert the files from the Edge 500 into GPX format, and this script to convert my images to DNG and geotag the ones that the camera didn't tag.  Rather than delete the images from the card once converting them, the script moves them to an "archive" folder elsewhere on the card to hide them from other programs.  Media cards are huge these days; why not keep the originals around in case something goes wrong?
+* Import Canon Raw image files (CR2 files) from a media card and convert them to DNG along the way.
+* Pull track data from a Garmin Edg 500 or similar device, converting it to GPX along the way.
+* Use the GPX data to geotag the DNG files, taking time zone into account.
+* If there is geolocation data already in the DNG from the camera, leave it as-is.
+
+## Why this exists
+
+I own a Canon EOS 5D Mark IV, which supposedly has set-and-forget geotagging, but the GPS is not very strong and will forget where it is when the camera is powered down.  So I carry around a Garmin Edge 500 as a backup, which is tiny, more accurate, and lasts all day.  This script combines data from the two.
 
 I recommend creating an Automator action to run this script, so you can just plug in the media card and click the action.
 
+This script is only compatible with MacOS but perhaps it can serve as a reference for others developing on other platforms.
+
 ***
 
-## This script does the following:
+## Actions performed by the script, in detail
 
-1. Check for required tools
-2. Verify that needed folders are present
-3. Look for a media card (by looking for a specific volume)
-4. Locate CR2 image files on the media card
+1. Check for required tools/folders
+2. Look for a media card (by looking for a specific volume) and locate CR2 image files on it
+3. Look for a Garmin volume and locate FIT data files on it
 
 If image files are present:
 
-5. Make a filename prefix based on the capture date in the EXIF tag in the image
-6. Check if a DNG image with the same filename and the same capture date exists in the target folder and skip the image if so
-7. Convert the image to DNG, placing it in the target folder
-8. Move the image to an "archived" folder on the media card, using the new filename
+4. Modify the filename to show the capture date from the EXIF tag
+5. Check if a DNG image with the same filename and the same capture date exists in the target folder, and skip if so
+6. Convert the image to DNG, into target folder
+7. Move the image to an "archived" folder on the media card
+
+If GPS data files are present:
+
+8. Convert them to GPX, auto-splitting the activities if there is a 4-hour gap
+9. Rename the original files to flag that they were processed
 
 If there are DNG files in the target folder, from this run or an earlier one:
 
-9. Find any that are missing EXIF geotag data 
-10. Look for GPX data files from a GPS in a given folder
-11. Check if any GPX data overlaps with the capture time of any images (using the time-zone corrected date)
-12. If so, geotag the image
-
-The idea is to make this script usable in several situations:
-* You want to read images off your media card, but don't want to waste the time and space converting them to DNG in a separate step.
-* You've pulled GPS data from some other device and want to use it when the camera itself didn't geotag.  (Can happen when your GPS system hasn't booted up fully and/or you power down between shots.)
-* You've pulled GPS data from a device and want to tag images that you copied off the card earlier.
-* You've copied the images but forgot to pull the GPS first.  (Just run the script again and it will do the right thing.) 
-
-This script is only compatible with MacOS but perhaps it can serve as a reference for others developing on other platforms.  I have tried to avoid most Python-isms in the code to leave it relatively adaptable to other languages.
+10. Find any that are missing EXIF geotag data 
+11. Look for GPX data files (from this run or an earlier one)
+12. If any of the track times overlap the image time, geotag the image
 
 ***
 
@@ -50,7 +54,7 @@ This script is only compatible with MacOS but perhaps it can serve as a referenc
 
 ### About Time Zones:
 
-Canon 5DS Mk IV firmware prior to 1.1.2 does not embed enough EXIF info for exiftool to extract the time zone directly.  But, it does provide an extended `-TimeZone` tag that we can read and use to construct an equivalent string ourselves.  Newer firmware corrects this by embedding a time zone offset directly into the `-SubSecCreateDate` tag.
+Canon 5DS Mk IV firmware prior to 1.1.2 does not embed enough EXIF info for exiftool to extract the time zone directly.  But, it does provide an extended `-TimeZone` tag that we can read and use to construct an equivalent string ourselves.  Newer firmware corrects this.
 
 * Canon firmware 1.0.4 SubSecCreateDate tag example: "`2018:06:03 16:44:52.81`"
 * Canon firmware 1.1.2 SubSecCreateDate tag example: "`2018:06:04 00:47:16.69-07:00`"
