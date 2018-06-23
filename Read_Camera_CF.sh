@@ -1,6 +1,7 @@
 #!/usr/local/bin/python
 
 import os, sys, re
+import shutil
 import subprocess
 import gpxpy
 from datetime import datetime, tzinfo, timedelta
@@ -109,18 +110,18 @@ def pretty_datetime(t):
 	return date_str + ' ' + time_str + u_str
 
 
-# Support function to invoke exiftool and pull out and parse two major pieces of data:
-# The creation date from the camera, and the active status of the GPS device in the camera while shooting.
+# Support function to invoke exiftool and pull out and parse three pieces of data:
+# The creation date from the camera, the time zone currently set, and the active status of the GPS device in the camera while shooting.
 def get_exif_bits_from_file(file_pathname):
 	gps_stat_out = subprocess.check_output(
 		exiftool + " -a -s -GPSStatus -TimeZone -SubSecCreateDate " + file_pathname, shell=True)
 	exif_d = {}
 
 	parts = gps_stat_out.split('SubSecCreateDate')
-	full_date_tag = parts[1].strip(' \t\n\r:')
-	d, t = full_date_tag.split(" ")
+	date_and_time_tag = parts[1].strip(' \t\n\r:')
+	d, t = date_and_time_tag.split(" ")
 	df = re.sub(':', '-', d)
-	tf = re.sub('[:\.]', '', t)
+	tf = re.sub('[:\.]', '-', t)
 
 	parts_b = parts[0].split('TimeZone')
 	time_zone_tag = parts_b[1].strip(' \t\n\r:')
@@ -128,14 +129,14 @@ def get_exif_bits_from_file(file_pathname):
 	# Parse the non-time-zone portion of the date string.
 	# This is the easy part.
 	# Most of the rest of this function is for taking the time zone into account.
-	full_date_as_datetime = datetime.strptime(full_date_tag[:22], "%Y:%m:%d %H:%M:%S.%f")
+	date_and_time_as_datetime = datetime.strptime(date_and_time_tag[:22], "%Y:%m:%d %H:%M:%S.%f")
 
-	# This is where the difference in Canon firmware as mentioned in the REAME comes into play.
+	# This is where the difference in Canon firmware as mentioned in the README comes into play.
 
 	# We will key off the length of the SubSecCreateDate tag to determine what to do.
-	if len(full_date_tag) > 22:
+	if len(date_and_time_tag) > 22:
 		# Seems to have time zone info.  Isolate it so it works with our parser. 
-		tz_to_parse = full_date_tag[22:]
+		tz_to_parse = date_and_time_tag[22:]
 	else:
 		# Not long enough to have time zone info.  Use the TimeZone tag.
 		tz_to_parse = time_zone_tag
@@ -161,16 +162,17 @@ def get_exif_bits_from_file(file_pathname):
 	tz_offset_tzinfo = fancytzoffset(tz_to_parse, tz_as_offset)
 
 	# Replace the time zone info object with our own
-	full_date_as_datetime = full_date_as_datetime.replace(tzinfo=tz_offset_tzinfo)
+	date_and_time_as_datetime = date_and_time_as_datetime.replace(tzinfo=tz_offset_tzinfo)
 
 	has_gps = "Active" in gps_stat_out
 
 	file_name = file_pathname.split('/')[-1]
 	file_name_no_ext = ''.join(file_name.split('.')[0:-1])
 
-	exif_d['full_date'] = df + " " + t
-	exif_d['full_date_as_datetime'] = full_date_as_datetime
-	exif_d['form_date'] = df + "-" + tf
+	exif_d['date_as_str'] = df
+	exif_d['date_and_time'] = df + " " + t
+	exif_d['date_and_time_as_datetime'] = date_and_time_as_datetime
+	exif_d['form_date'] = df + "_" + tf
 	exif_d['has_gps'] = has_gps
 	exif_d['file_name'] = file_name
 	exif_d['file_name_no_ext'] = file_name_no_ext
@@ -180,12 +182,14 @@ def get_exif_bits_from_file(file_pathname):
 
 if os.path.exists(garmin_gps_volume):
 	print "Found GPS path."
-	fit_files = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")
+	#fit_files = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")	# Edge 500
+	fit_files = look_for_files(garmin_gps_volume + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
 	if len(fit_files) > 0:
 		for fit_file in fit_files:
 			base_name = fit_file.split('/')[-1]
 			base_name_no_ext = ''.join(base_name.split('.')[0:-1])
 			print fit_file
+			path_to_gpx = os.path.join(gps_files_folder, base_name_no_ext + '.gpx')
 			gpsbabel_args = [
 				'-i garmin_fit',		# Input format
 				'-f',					# Input file
@@ -193,7 +197,7 @@ if os.path.exists(garmin_gps_volume):
 				'-x track,pack,split=4h,title="LOG # %c"',	# Split activities if gap is larger than 4 hours
 				'-o gpx',				# Output format
 				'-F',					# Output file
-				'"' + gps_files_folder + '/' + base_name_no_ext + '.gpx"'
+				'"' + path_to_gpx + '"'
 			]
 			fit_convert_cmd = gpsbabel + " " + ' '.join(gpsbabel_args)
 			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
@@ -240,7 +244,7 @@ if len(files_list) > 0:
 		target_file = xf['form_date'] + "_" + xf['file_name_no_ext'] + ".dng"
 
 		xf['target_file_name'] = target_file
-		xf['target_file_pathname'] = dng_folder + "/" + target_file
+		xf['target_file_pathname'] = os.path.join(dng_folder, target_file)
 		xf['gps_added'] = False
 
 		# If the target file exists AND the datestamp in the EXIF matches exactly,
@@ -266,7 +270,7 @@ if len(files_list) > 0:
 		else:
 			already_conv_str = "                     "
 
-		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['full_date_as_datetime']) + has_gps_str + already_conv_str
+		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['date_and_time_as_datetime']) + has_gps_str + already_conv_str
 
 		if xf['already_converted']:
 			already_processed.append(original)
@@ -300,21 +304,19 @@ if len(files_list) > 0:
 			# So we save the EXIF data we pulled from the original under a reference to the target.
 			target_file_exif_data[xf['target_file_pathname']] = xf
 
+			archive_path = os.path.join(card_archive_folder, xf['date_as_str'])
+			if not os.path.isdir(archive_path):
+				os.makedirs(archive_path)
+
+			archive_pathname = os.path.join(archive_path, xf['file_name'])
+			print 'moving "' + original + '" to "' + archive_pathname + '"'
+			shutil.move(original, archive_pathname)
+
 		all_exif_data[original] = xf
 
 	print "Already verified processed: " + str(len(already_processed))
 	print "Newly Processed: " + str(len(newly_processed))
-
 	to_move = already_processed + newly_processed
-
-	for original in to_move:
-		xf = all_exif_data[original]
-		orig_file_name = xf['file_name']
-		archive_pathname = card_archive_folder + "/" + orig_file_name
-		mv_cmd = 'mv "' + original + '" "' + archive_pathname + '"'
-		print mv_cmd
-		mv_out = subprocess.check_output(mv_cmd, shell=True) 
-
 	print "Moved to archive folder: " + str(len(to_move))
 
 
@@ -344,7 +346,7 @@ for dng_file in dng_list:
 			has_gps_str = "   Has GPS "
 		else:
 			has_gps_str = "           "
-		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['full_date_as_datetime']) + has_gps_str
+		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['date_and_time_as_datetime']) + has_gps_str
 
 		target_file_exif_data[dng_file] = xf
 		additional_exif_fetches = additional_exif_fetches + 1
