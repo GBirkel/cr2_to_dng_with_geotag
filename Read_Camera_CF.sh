@@ -42,7 +42,7 @@ def look_for_files(p):
 		ls_out = subprocess.check_output("ls " + p, shell=True)
 		files_list = ls_out.split("\n")
 		files_list = [f for f in files_list if len(f) > 4]
-	except subprocess.CalledProcessError as e:
+	except subprocess.CalledProcessError:
 		files_list = []
 	return files_list
 
@@ -154,7 +154,7 @@ def get_exif_bits_from_file(file_pathname):
 	tz_without_modifier = re.sub(':', '', tz_without_modifier)
 	if len(tz_without_modifier) == 4:
 		tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:])*60) * signal
-	elif len(s) == 6:
+	elif len(tz_without_modifier) == 6:
 		tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:4])*60 + int(tz_without_modifier[4:])) * signal
 
 	# Create an object of a tzinfo-derived class to hold the time zone info,
@@ -401,17 +401,118 @@ if len(valid_gps_files) < 1:
    	print "No GPX files have valid date ranges.  Skipping geotag stage."
 	exit()
 
+# The plan here is to read all the data points from all the valid GPX files at once,
+# then use the nearest points before and after a photo timestamp to find the relevant point for that photo.
+# Of course, if we've somehow recorded two tracks for the same time period in very different locations,
+# this will make a mess.  But this is a single-user script and that situation is beyond the design spec.
+
+all_gpx_points = []
+
+for gpx_file in valid_gps_files:
+	gpx = gpxpy.parse(open(gpx_file, 'r'))
+	for track_idx, track in enumerate(gpx.tracks):		
+		for seg_idx, segment in enumerate(track.segments):
+			segment_length = segment.length_3d()
+			for point_idx, point in enumerate(segment.points):
+				p = {}
+				tz_utc = fancytzutc()
+				t_utc = point.time.replace(tzinfo=tz_utc)
+				p['t'] = t_utc
+				p['lat'] = point.latitude
+				p['lon'] = point.longitude
+				p['el'] = point.elevation
+				p['spd'] = segment.get_speed(point_idx)
+				all_gpx_points.append(p)
+
+print "Sorting " + str(len(all_gpx_points)) + " GPX points."
+
+sorted_gpx_points = sorted(all_gpx_points, key=lambda x: x['t'], reverse=False)
+
 for dng_file in dngs_without_gps:
-	xf = target_file_exif_data[dng_file]	
-	gpx_files_in_range = []
-	for gpx_file in valid_gps_files:
-		stats = gpx_files_stats[gpx_file]
-		#if xf['']
-    	
+	xf = target_file_exif_data[dng_file]
+	photo_dt = xf['date_and_time_as_datetime']
+	i = 0
+	found_highpoint = False
+	while i < len(sorted_gpx_points) and not found_highpoint:
+		if sorted_gpx_points[i]['t'] > photo_dt:
+			found_highpoint = True
+		else:
+			i += 1
+	found_midpoint = False
 
+	# To ensure a decent GPS read, we want a
+	# location that has at least two points on either side,
+	# each within 20 seconds of its neighbors.
+	if i > 1 and i < (len(sorted_gpx_points)-1):
+		found_midpoint = True
+	if not found_midpoint:
+		print xf['file_name_no_ext'] + ": No points within range."
+	else:
+		photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
 
+		gap = timedelta(seconds=20)
+		delta_during = sorted_gpx_points[i]['t'] - sorted_gpx_points[i-1]['t']
+		delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
+		delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
+		if delta_during > gap or delta_before > gap or delta_after > gap:
+			print xf['file_name_no_ext'] + ": Falls on a gap larger than 20 seconds."
+		else:
 
-# TODO:  find compatible ranges, attempt tag
+			# In GPX files, latitude and longitude are supplied as decimal degrees
+			# and are allowed a negative range, e.g. -180 to 180 for longitude.
 
+			# Calculate the delta for the latitude, longitude, and elevation.
+			lat_start = sorted_gpx_points[i-1]['lat']
+			lon_start = sorted_gpx_points[i-1]['lon']
+			el_start = sorted_gpx_points[i-1]['el']
+			lat_delta = sorted_gpx_points[i]['lat'] - lat_start
+			lon_delta = sorted_gpx_points[i]['lon'] - lon_start
+			el_delta = sorted_gpx_points[i]['el'] - el_start
+
+			# Find a mid-point for the photo, interpolating based on the time.
+			lat_calc = sorted_gpx_points[i-1]['lat']
+			lon_calc = sorted_gpx_points[i-1]['lon']
+			el_calc = sorted_gpx_points[i-1]['el']
+			time_delta_s = delta_during.total_seconds()
+			photo_time_delta_s = photo_time_delta.total_seconds()
+			# If the interval, or the offset from the start point, are zero, just take the start point.
+			if photo_time_delta_s > 0 and time_delta_s > 0:
+				frac = time_delta_s / photo_time_delta_s
+				lat_calc = lat_start + (frac * lat_delta)
+				lon_calc = lon_start + (frac * lon_delta)
+				el_calc = el_start + (frac * el_delta)
+
+			# When supplying this data to the EXIF tool we will have to take the absolute
+			# value, and provide a "reference" for whether that value is forward or backward:
+			# For latitude: "North" for a positive original value,
+			#               versus "South" for a negative original value.
+			# For longitude: "East" versus "West"
+			# For elevation: "Above Sea Level" versus "Below Sea Level", expressed in meters.
+
+			lat_ref_str = "North"
+			if lat_calc < 0:
+				lat_ref_str = "South"
+			long_ref_str = "East"
+			if lon_calc < 0:
+				long_ref_str = "West"
+			el_ref = "Above Sea Level"
+			if el_calc < 0:
+				el_ref = "Below Sea Level"
+
+			print xf['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
+					str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + " " + el_ref
+
+			exif_gps_embed_args = [
+				'-GPSLatitude="' + str(abs(lat_calc)) + '"',
+				'-GPSLongitude="' + str(abs(lon_calc)) + '"',
+				'-GPSAltitude="' + str(abs(el_calc)) + ' m"',
+				'-GPSLatitudeRef="' + lat_ref_str + '"',
+				'-GPSLongitudeRef="' + long_ref_str + '"',
+				'-GPSAltitudeRef="' + el_ref + '"',
+				'-GPSStatus="Measurement Active"',
+				'"' + dng_file + '"'
+			]
+			exif_gps_embed_cmd = exiftool + " " + ' '.join(exif_gps_embed_args)
+			exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 print "Done."
