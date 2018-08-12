@@ -185,6 +185,12 @@ if os.path.exists(garmin_gps_volume):
 	#fit_files = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")	# Edge 500
 	fit_files = look_for_files(garmin_gps_volume + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
 	if len(fit_files) > 0:
+		# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
+		# causing them to be re-imported.
+		archive_path = os.path.join(gps_files_folder, 'Processed')
+		if not os.path.isdir(archive_path):
+			os.makedirs(archive_path)
+
 		for fit_file in fit_files:
 			base_name = fit_file.split('/')[-1]
 			base_name_no_ext = ''.join(base_name.split('.')[0:-1])
@@ -201,7 +207,8 @@ if os.path.exists(garmin_gps_volume):
 			]
 			fit_convert_cmd = gpsbabel + " " + ' '.join(gpsbabel_args)
 			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
-			mv_out = subprocess.check_output("mv \"" + fit_file + "\" \"" + fit_file + "-read\"", shell=True)
+	
+			mv_out = subprocess.check_output("mv \"" + fit_file + "\" \"" + os.path.join(archive_path, base_name) + "\"", shell=True)
 		print "Converted " + str(len(fit_files)) + " FIT files to GPX."
 
 
