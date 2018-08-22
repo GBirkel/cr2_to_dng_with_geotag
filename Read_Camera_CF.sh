@@ -207,8 +207,13 @@ if os.path.exists(garmin_gps_volume):
 			]
 			fit_convert_cmd = gpsbabel + " " + ' '.join(gpsbabel_args)
 			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
-	
-			mv_out = subprocess.check_output("mv \"" + fit_file + "\" \"" + os.path.join(archive_path, base_name) + "\"", shell=True)
+			# If we use move, MacOS will attempt to copy file permissions.
+			# On Garmin devices, FIT files are shown with permissions of 777.
+			# Since the executable permission is set, MacOS will try to copy it, which will fail due to system protection measures.
+			# Trying to change the permissions on the source file in place will have no result.
+			# So we use copyfile instead, which does not attempt to set equivalent permissions, then remove the source file afterwards.
+			shutil.copyfile(fit_file, os.path.join(archive_path, base_name))
+			os.remove(fit_file)
 		print "Converted " + str(len(fit_files)) + " FIT files to GPX."
 
 
