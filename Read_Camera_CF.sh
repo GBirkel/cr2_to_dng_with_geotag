@@ -606,21 +606,21 @@ for r in continuous_ranges:
 
 	chart_out_path = os.path.join(chart_output_folder, 'output_template-' + t[0][:13] + '.html')
 
-	chart_out_file_h = open(chart_out_path, "w")
-	chart_out_file_h.write(template_html)
+	cofh = open(chart_out_path, "w")
+	cofh.write(template_html)
 
-	chart_out_file_h.write("<div class='ptws-ride-log' rideid='" + t[0] + "'>\n")
+	cofh.write("<div class='ptws-ride-log' rideid='" + t[0] + "'>\n")
 
-	chart_out_file_h.write("<div class='lat'>" + ','.join(lat) + "</div>\n")
-	chart_out_file_h.write("<div class='lon'>" + ','.join(lat) + "</div>\n")
-	chart_out_file_h.write("<div class='el'>" + ','.join(lat) + "</div>\n")
-	chart_out_file_h.write("<div class='t'>" + ','.join(lat) + "</div>\n")
-	chart_out_file_h.write("<div class='spd'>" + ','.join(lat) + "</div>\n")
+	cofh.write("<div class='lat'>" + ','.join(lat) + "</div>\n")
+	cofh.write("<div class='lon'>" + ','.join(lon) + "</div>\n")
+	cofh.write("<div class='el'>" + ','.join(el) + "</div>\n")
+	cofh.write("<div class='t'>" + ','.join(t) + "</div>\n")
+	cofh.write("<div class='spd'>" + ','.join(spd) + "</div>\n")
 
-	chart_out_file_h.write("</div>\n")
+	cofh.write("</div>\n")
 
-	chart_out_file_h.write("\n\n</body>\n</html>")
+	cofh.write("\n</body>\n</html>")
 
-	chart_out_file_h.close()
+	cofh.close()
 
 print "Done."

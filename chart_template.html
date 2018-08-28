@@ -1,0 +1,262 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta http-equiv="Content-Style-Type" content="text/css" />
+  <meta name="GENERATOR" content="rubiTrack" />
+  <script src="https://code.jquery.com/jquery-latest.js"></script>
+  <script src="https://maps.googleapis.com/maps/api/js?sensor=false"></script>
+  <script src="https://mile42.net/wp-content/plugins/ptws/js/Chart.bundle.min.js"></script>
+  <title>PTWS Chart Template</title>
+<style>
+
+.ptws-googlemap {
+    border: #ccc 1px solid;
+    -webkit-border-radius: 10px;
+    padding: 5px;
+    margin: 2px;
+    width: 640px;
+    background-color: #F8F8F8;
+}
+
+.ptws-googlemap > div {
+    height: 400px;
+}
+
+.ptws-elevation-chart {
+    border: #ccc 1px solid;
+    -webkit-border-radius: 10px;
+    padding: 5px;
+    margin: 2px;
+    width: 640px;
+    background-color: #F8F8F8;
+}
+
+.ptws-elevation-chart > canvas {
+    height: 140px;
+}
+
+.ptws-ride-log > div.lat, .ptws-ride-log > div.lon, .ptws-ride-log > div.el,
+.ptws-ride-log > div.spd, .ptws-ride-log > div.t {
+  display:none;
+}
+
+</style>
+  <script type="text/javascript"> 
+
+var map = null;
+function initialize() {
+    jQuery('div.ptws-ride-log').each(function (index, item) {
+        var jqitem = jQuery(item);
+        var id = jqitem.attr('rideid');
+        var rawdata = {};
+        // Check each div for any of these classes, and if there's a match,
+        // grab the text content of the div, split it into an array, and save it.
+        var classesToCheck = ['lat','lon','el','t','spd'];
+        jqitem.children().each(function (subindex, subitem) {
+            classesToCheck.forEach(function (cl) {
+                if (jQuery(subitem).hasClass(cl)) { rawdata[cl] = jQuery(subitem).text().split(','); }
+            });
+        });
+        // Check and see if we got divs with every needed class
+        var hasAll = classesToCheck.filter(function (a) { return rawdata[a]; });
+        if (hasAll.length == classesToCheck.length) {
+            var turnTheseToFloat = ['lat', 'lon', 'el', 'spd'];
+            turnTheseToFloat.forEach(function (cl) {
+                rawdata[cl+"_f"] = rawdata[cl].map(function (m) { return  Number.parseFloat(m) });
+            });
+            var points = [];
+            var i = 0;
+            while (i < rawdata['t'].length) {
+                var point = {
+                    't': rawdata['t'][i],
+                    'lat': rawdata['lat_f'][i],
+                    'lon': rawdata['lon_f'][i],
+                    'el': rawdata['el_f'][i],
+                    'spd': rawdata['spd_f'][i]
+                };
+                points.push(point);
+                i++;
+            }
+            // Reduce the set to a maximum of 640 for the elevation/speed graphs
+            var sparsifiedPoints = [];
+            if (points.length < 650) {
+                sparsifiedPoints = points;
+            } else {
+                sparsifiedPoints.push(points[0]);
+                var nextWholeNumber = 1;
+                var step = 640.0 / points.length;
+                var unsparseIndex = 1;
+                while (unsparseIndex < points.length) {
+                    if ((unsparseIndex * step) > sparsifiedPoints.length) {
+                        sparsifiedPoints.push(points[unsparseIndex]);
+                    }
+                    unsparseIndex++;
+                }
+            }
+
+            console.log(points);
+            console.log(sparsifiedPoints);
+
+            var latMin = Math.min.apply(0, rawdata['lat_f']);
+            var latMax = Math.max.apply(0, rawdata['lat_f']);
+            var lonMin = Math.min.apply(0, rawdata['lon_f']);
+            var lonMax = Math.max.apply(0, rawdata['lon_f']);
+            var latCenter = (latMin + latMax) / 2;
+            var lonCenter = (lonMin + lonMax) / 2;
+
+            var mapCenter = new google.maps.LatLng(latCenter, lonCenter);
+            var mapBounds = new google.maps.LatLngBounds(new google.maps.LatLng(latMin, lonMin), new google.maps.LatLng(latMax, lonMax));
+            var mapOptions = {
+                zoom: 5,
+                center: mapCenter,
+                mapTypeId: google.maps.MapTypeId.TERRAIN
+            };
+
+            var map = new google.maps.Map(document.getElementById('ptws-googlemap-1023'), mapOptions);
+
+            var trackPoints = points.map(function (pt) { return new google.maps.LatLng(pt['lat'], pt['lon']); });
+
+            var border = new google.maps.Polyline({
+                clickable: true,
+                path: trackPoints,
+                strokeColor: '#78a120',
+                strokeWeight: 6.000000,
+                zIndex: 10
+            });
+
+            var track = new google.maps.Polyline({
+                clickable: true,
+                path: trackPoints,
+                strokeColor: '#beff33',
+                strokeWeight: 4.000000,
+                zIndex: 20
+            });
+
+            border.setMap(map);
+            track.setMap(map);
+            map.fitBounds(mapBounds);
+
+            var elevData  = sparsifiedPoints.map(function (pt) { return {x:pt['t'], y:pt['el']}; });
+            var spdData = sparsifiedPoints.map(function (pt) { return { x: pt['t'], y: pt['spd'] }; });
+
+            var ctx = document.getElementById('ptws-elevation-1023').getContext('2d');
+            var bgGradient = ctx.createLinearGradient(0, 0, 0, 140);
+            bgGradient.addColorStop(0, 'rgba(161, 255, 5, 0.8)');
+            bgGradient.addColorStop(1, 'rgba(161, 255, 5, 0.0)');
+
+            var lineChartData = {
+                datasets: [{
+                    label: 'Elevation',
+                    units: 'm',
+                    borderColor: 'rgb(130,171,42)',
+                    pointBackgroundColor: 'rgb(130,171,42)',
+                    backgroundColor: bgGradient,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHitRadius: 3,
+                    fill: true,
+                    data: elevData,
+                    yAxisID: 'y-axis-1',
+                }, {
+                    label: 'Speed',
+                    units: 'm/s',
+                    borderColor: 'rgb(205, 197, 163)',
+                    pointBackgroundColor: 'rgb(205, 197, 163)',
+                    backgroundColor: 'rgb(205, 197, 163)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHitRadius: 3,
+                    cubicInterpolationMode: 'default',
+                    lineTension: 2,
+                    fill: false,
+                    data: spdData,
+                    yAxisID: 'y-axis-2'
+                }]
+            };
+
+            var newChart = Chart.Line(ctx, {
+                data: lineChartData,
+                options: {
+                    responsive: true,
+                    hoverMode: 'index',
+                    stacked: false,
+                    title: {
+                        display: false
+                    },
+                    legend: {
+                        display: false
+                    },
+                    tooltips: {
+                        backgroundColor: 'rgba(255,255,255,255.8)',
+                        titleFontColor: '#000',
+                        bodyFontColor: '#000',
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function (tooltipItems, data) {
+                                return data.datasets[tooltipItems.datasetIndex].label + ': ' + tooltipItems.yLabel + ' ' + data.datasets[tooltipItems.datasetIndex].units;
+                            }
+                        }
+                    },
+                    scales: {
+                        xAxes: [{
+                            type: 'time',
+                            time: {
+                                distribution: 'linear',
+                                tooltipFormat: 'h:mm a'
+                            },
+                            scaleLabel: {
+                                display: false
+                            },
+                            gridLines: {
+                                display: false,
+                            }
+                        }],
+                        yAxes: [
+                            {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                id: 'y-axis-1',
+                                gridLines: {
+                                    display: false,
+                                },
+                            },
+                            {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                id: 'y-axis-2',
+
+                                // grid line settings
+                                gridLines: {
+                                    display: false,
+                                },
+                            }
+                        ],
+                    }
+                }
+            });
+        }
+    });
+}
+
+  </script> 
+</head>
+<body onload="initialize();">
+
+<div class="heading">
+<h1>Aug 22, 2018</h1>
+</div>
+
+<div class="ptws-googlemap">
+  <div id="ptws-googlemap-1023"></div> 
+</div>
+
+<div class="ptws-elevation-chart">
+  <canvas id="ptws-elevation-1023" width="640" height="140"></canvas>
+</div>
+
+<!-- note: body and html tags are intentionally left off this template file -->
