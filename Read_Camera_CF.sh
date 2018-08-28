@@ -16,7 +16,7 @@ card_archive_folder = card_volume + "/archived"
 
 dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"	# For DNG files converted from CR2 files
 gps_files_folder = "/Users/gbirkel/Documents/GPS"	# For GPX files from the GPS, to use for assigning geotags
-chart_output_folder = "/Users/gbirkel/Documents/GPS"	# For generating map+graph pages
+chart_output_folder = "/Users/gbirkel/Documents/GPS/chart_output"	# For generating map+graph pages
 
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
@@ -423,124 +423,124 @@ sorted_gpx_points = sorted(all_gpx_points, key=lambda x: x['t'], reverse=False)
 dng_list = look_for_files(dng_folder + "/*.dng")
 if len(dng_list) < 1:
 	print "No DNG files found in target folder.  Skipping geotag stage."
-	exit()
-print "Found " + str(len(dng_list)) + " DNG files."
-
-# Fetch EXIF data for any DNGs that we haven't already
-# (That would be all the DNGs that were in the target folder already
-#  and didn't have filenames matching CR2s)
-additional_exif_fetches = 0
-for dng_file in dng_list:
-	if not target_file_exif_data.has_key(dng_file):
-
-		xf = get_exif_bits_from_file(dng_file)
-		if xf['has_gps']:
-			has_gps_str = "   Has GPS "
-		else:
-			has_gps_str = "           "
-		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['date_and_time_as_datetime']) + has_gps_str
-
-		target_file_exif_data[dng_file] = xf
-		additional_exif_fetches = additional_exif_fetches + 1
-if additional_exif_fetches > 0:
-    print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files."
-
-# Filter out DNGs with valid GPS data in their EXIF tags.
-dngs_without_gps = []
-for dng_file in dng_list:
-	if not target_file_exif_data[dng_file]['has_gps']:
-		dngs_without_gps.append(dng_file)
-if len(dngs_without_gps) < 1:
-   	print "All DNG files have GPS tags.  Skipping geotag stage."
 else:
-	print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
+	print "Found " + str(len(dng_list)) + " DNG files."
 
-	for dng_file in dngs_without_gps:
-		xf = target_file_exif_data[dng_file]
-		photo_dt = xf['date_and_time_as_datetime']
-		i = 0
-		found_highpoint = False
-		while i < len(sorted_gpx_points) and not found_highpoint:
-			if sorted_gpx_points[i]['t'] > photo_dt:
-				found_highpoint = True
+	# Fetch EXIF data for any DNGs that we haven't already
+	# (That would be all the DNGs that were in the target folder already
+	#  and didn't have filenames matching CR2s)
+	additional_exif_fetches = 0
+	for dng_file in dng_list:
+		if not target_file_exif_data.has_key(dng_file):
+
+			xf = get_exif_bits_from_file(dng_file)
+			if xf['has_gps']:
+				has_gps_str = "   Has GPS "
 			else:
-				i += 1
-		found_midpoint = False
+				has_gps_str = "           "
+			print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['date_and_time_as_datetime']) + has_gps_str
 
-		# To ensure a decent GPS read, we want a
-		# location that has at least two points on either side,
-		# each within 20 seconds of its neighbors.
-		if i > 1 and i < (len(sorted_gpx_points)-1):
-			found_midpoint = True
-		if not found_midpoint:
-			print xf['file_name_no_ext'] + ": No points within range."
-		else:
-			photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
+			target_file_exif_data[dng_file] = xf
+			additional_exif_fetches = additional_exif_fetches + 1
+	if additional_exif_fetches > 0:
+		print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files."
 
-			gap = timedelta(seconds=20)
-			delta_during = sorted_gpx_points[i]['t'] - sorted_gpx_points[i-1]['t']
-			delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
-			delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
-			if delta_during > gap or delta_before > gap or delta_after > gap:
-				print xf['file_name_no_ext'] + ": Falls on a gap larger than 20 seconds."
+	# Filter out DNGs with valid GPS data in their EXIF tags.
+	dngs_without_gps = []
+	for dng_file in dng_list:
+		if not target_file_exif_data[dng_file]['has_gps']:
+			dngs_without_gps.append(dng_file)
+	if len(dngs_without_gps) < 1:
+		print "All DNG files have GPS tags.  Skipping geotag stage."
+	else:
+		print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
+
+		for dng_file in dngs_without_gps:
+			xf = target_file_exif_data[dng_file]
+			photo_dt = xf['date_and_time_as_datetime']
+			i = 0
+			found_highpoint = False
+			while i < len(sorted_gpx_points) and not found_highpoint:
+				if sorted_gpx_points[i]['t'] > photo_dt:
+					found_highpoint = True
+				else:
+					i += 1
+			found_midpoint = False
+
+			# To ensure a decent GPS read, we want a
+			# location that has at least two points on either side,
+			# each within 20 seconds of its neighbors.
+			if i > 1 and i < (len(sorted_gpx_points)-1):
+				found_midpoint = True
+			if not found_midpoint:
+				print xf['file_name_no_ext'] + ": No points within range."
 			else:
+				photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
 
-				# In GPX files, latitude and longitude are supplied as decimal degrees
-				# and are allowed a negative range, e.g. -180 to 180 for longitude.
+				gap = timedelta(seconds=20)
+				delta_during = sorted_gpx_points[i]['t'] - sorted_gpx_points[i-1]['t']
+				delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
+				delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
+				if delta_during > gap or delta_before > gap or delta_after > gap:
+					print xf['file_name_no_ext'] + ": Falls on a gap larger than 20 seconds."
+				else:
 
-				# Calculate the delta for the latitude, longitude, and elevation.
-				lat_start = sorted_gpx_points[i-1]['lat']
-				lon_start = sorted_gpx_points[i-1]['lon']
-				el_start = sorted_gpx_points[i-1]['el']
-				lat_delta = sorted_gpx_points[i]['lat'] - lat_start
-				lon_delta = sorted_gpx_points[i]['lon'] - lon_start
-				el_delta = sorted_gpx_points[i]['el'] - el_start
+					# In GPX files, latitude and longitude are supplied as decimal degrees
+					# and are allowed a negative range, e.g. -180 to 180 for longitude.
 
-				# Find a mid-point for the photo, interpolating based on the time.
-				lat_calc = sorted_gpx_points[i-1]['lat']
-				lon_calc = sorted_gpx_points[i-1]['lon']
-				el_calc = sorted_gpx_points[i-1]['el']
-				time_delta_s = delta_during.total_seconds()
-				photo_time_delta_s = photo_time_delta.total_seconds()
-				# If the interval, or the offset from the start point, are zero, just take the start point.
-				if photo_time_delta_s > 0 and time_delta_s > 0:
-					frac = time_delta_s / photo_time_delta_s
-					lat_calc = lat_start + (frac * lat_delta)
-					lon_calc = lon_start + (frac * lon_delta)
-					el_calc = el_start + (frac * el_delta)
+					# Calculate the delta for the latitude, longitude, and elevation.
+					lat_start = sorted_gpx_points[i-1]['lat']
+					lon_start = sorted_gpx_points[i-1]['lon']
+					el_start = sorted_gpx_points[i-1]['el']
+					lat_delta = sorted_gpx_points[i]['lat'] - lat_start
+					lon_delta = sorted_gpx_points[i]['lon'] - lon_start
+					el_delta = sorted_gpx_points[i]['el'] - el_start
 
-				# When supplying this data to the EXIF tool we will have to take the absolute
-				# value, and provide a "reference" for whether that value is forward or backward:
-				# For latitude: "North" for a positive original value,
-				#               versus "South" for a negative original value.
-				# For longitude: "East" versus "West"
-				# For elevation: "Above Sea Level" versus "Below Sea Level", expressed in meters.
+					# Find a mid-point for the photo, interpolating based on the time.
+					lat_calc = sorted_gpx_points[i-1]['lat']
+					lon_calc = sorted_gpx_points[i-1]['lon']
+					el_calc = sorted_gpx_points[i-1]['el']
+					time_delta_s = delta_during.total_seconds()
+					photo_time_delta_s = photo_time_delta.total_seconds()
+					# If the interval, or the offset from the start point, are zero, just take the start point.
+					if photo_time_delta_s > 0 and time_delta_s > 0:
+						frac = time_delta_s / photo_time_delta_s
+						lat_calc = lat_start + (frac * lat_delta)
+						lon_calc = lon_start + (frac * lon_delta)
+						el_calc = el_start + (frac * el_delta)
 
-				lat_ref_str = "North"
-				if lat_calc < 0:
-					lat_ref_str = "South"
-				long_ref_str = "East"
-				if lon_calc < 0:
-					long_ref_str = "West"
-				el_ref = "Above Sea Level"
-				if el_calc < 0:
-					el_ref = "Below Sea Level"
+					# When supplying this data to the EXIF tool we will have to take the absolute
+					# value, and provide a "reference" for whether that value is forward or backward:
+					# For latitude: "North" for a positive original value,
+					#               versus "South" for a negative original value.
+					# For longitude: "East" versus "West"
+					# For elevation: "Above Sea Level" versus "Below Sea Level", expressed in meters.
 
-				print xf['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
-						str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + " " + el_ref
+					lat_ref_str = "North"
+					if lat_calc < 0:
+						lat_ref_str = "South"
+					long_ref_str = "East"
+					if lon_calc < 0:
+						long_ref_str = "West"
+					el_ref = "Above Sea Level"
+					if el_calc < 0:
+						el_ref = "Below Sea Level"
 
-				exif_gps_embed_args = [
-					'-GPSLatitude="' + str(abs(lat_calc)) + '"',
-					'-GPSLongitude="' + str(abs(lon_calc)) + '"',
-					'-GPSAltitude="' + str(abs(el_calc)) + ' m"',
-					'-GPSLatitudeRef="' + lat_ref_str + '"',
-					'-GPSLongitudeRef="' + long_ref_str + '"',
-					'-GPSAltitudeRef="' + el_ref + '"',
-					'-GPSStatus="Measurement Active"',
-					'"' + dng_file + '"'
-				]
-				exif_gps_embed_cmd = exiftool + " " + ' '.join(exif_gps_embed_args)
-				exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
+					print xf['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
+							str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + " " + el_ref
+
+					exif_gps_embed_args = [
+						'-GPSLatitude="' + str(abs(lat_calc)) + '"',
+						'-GPSLongitude="' + str(abs(lon_calc)) + '"',
+						'-GPSAltitude="' + str(abs(el_calc)) + ' m"',
+						'-GPSLatitudeRef="' + lat_ref_str + '"',
+						'-GPSLongitudeRef="' + long_ref_str + '"',
+						'-GPSAltitudeRef="' + el_ref + '"',
+						'-GPSStatus="Measurement Active"',
+						'"' + dng_file + '"'
+					]
+					exif_gps_embed_cmd = exiftool + " " + ' '.join(exif_gps_embed_args)
+					exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 #
 # Phase 5: Use curent stock of GPX data to generate embeddable data for an inline google map
@@ -550,6 +550,77 @@ else:
 # will change based on the time zone, so breaking across days is cumbersome, especially
 # if the rider rides past midnight.
 
+template_file_h = open("chart_template.html", "r")
+template_html = template_file_h.read()
 
+if not os.path.isdir(chart_output_folder):
+	print "Cannot find chart output path " + chart_output_folder + " ."
+	exit()
+
+# Break all our GPX data into continuous chunks defined by gaps larger than six hours between them.
+
+continuous_ranges = []
+smallest_allowable_gap = timedelta(hours=6)
+
+this_range_start = 0
+prev_time = sorted_gpx_points[0]['t']
+i = 1
+
+while i < len(sorted_gpx_points):
+	cur_time = sorted_gpx_points[i]['t']
+	time_delta = cur_time - prev_time
+	# If the gap betewen this point and the last is larger than 6 hours, declare a new range
+	if time_delta > smallest_allowable_gap:
+		# Runs less than 60 samples are ignored
+		if (i - this_range_start) > 60:
+			new_range = {}
+			new_range['start'] = this_range_start
+			new_range['end'] = i-1
+			continuous_ranges.append(new_range)
+		this_range_start = i
+	prev_time = cur_time
+	i += 1
+if i > 1:
+	if (i - this_range_start) > 60:
+		new_range = {}
+		new_range['start'] = this_range_start
+		new_range['end'] = i-1
+		continuous_ranges.append(new_range)
+print "Found " + str(len(continuous_ranges)) + " continuous ranges."
+
+for r in continuous_ranges:
+	lat = []
+	lon = []
+	el = []
+	t = []
+	spd = []
+	i = r['start']
+	while i <= r['end']:
+		pt = sorted_gpx_points[i]
+		lat.append(str(pt['lat']))
+		lon.append(str(pt['lon']))
+		el.append(str(pt['el']))
+		t.append(pt['t'].isoformat())
+		spd.append(str(pt['spd']))
+		i += 1
+
+	chart_out_path = os.path.join(chart_output_folder, 'output_template-' + t[0][:13] + '.html')
+
+	chart_out_file_h = open(chart_out_path, "w")
+	chart_out_file_h.write(template_html)
+
+	chart_out_file_h.write("<div class='ptws-ride-log' rideid='" + t[0] + "'>\n")
+
+	chart_out_file_h.write("<div class='lat'>" + ','.join(lat) + "</div>\n")
+	chart_out_file_h.write("<div class='lon'>" + ','.join(lat) + "</div>\n")
+	chart_out_file_h.write("<div class='el'>" + ','.join(lat) + "</div>\n")
+	chart_out_file_h.write("<div class='t'>" + ','.join(lat) + "</div>\n")
+	chart_out_file_h.write("<div class='spd'>" + ','.join(lat) + "</div>\n")
+
+	chart_out_file_h.write("</div>\n")
+
+	chart_out_file_h.write("\n\n</body>\n</html>")
+
+	chart_out_file_h.close()
 
 print "Done."
