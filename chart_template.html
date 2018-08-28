@@ -85,9 +85,10 @@ function initialize() {
                 points.push(point);
                 i++;
             }
+
             // Reduce the set to a maximum of 640 for the elevation/speed graphs
             var sparsifiedPoints = [];
-            if (points.length < 650) {
+            if (points.length < 645) {
                 sparsifiedPoints = points;
             } else {
                 sparsifiedPoints.push(points[0]);
