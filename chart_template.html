@@ -1,10 +1,8 @@
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
-    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
   <meta http-equiv="Content-Style-Type" content="text/css" />
-  <meta name="GENERATOR" content="rubiTrack" />
   <script src="https://code.jquery.com/jquery-latest.js"></script>
   <script src="https://maps.googleapis.com/maps/api/js?sensor=false"></script>
   <script src="https://mile42.net/wp-content/plugins/ptws/js/Chart.bundle.min.js"></script>
@@ -77,6 +75,7 @@ function initialize() {
             while (i < rawdata['t'].length) {
                 var point = {
                     't': rawdata['t'][i],
+                    't_d': new Date(rawdata['t'][i]),
                     'lat': rawdata['lat_f'][i],
                     'lon': rawdata['lon_f'][i],
                     'el': rawdata['el_f'][i],
@@ -86,24 +85,59 @@ function initialize() {
                 i++;
             }
 
+            // Smooth points using their predecessors within a 7 second range
+
+            var smoothedPoints = [];
+            var pointPool = [];
+            var nextPointIndex = 0;
+            var typesToSmooth = ['lat', 'lon', 'el', 'spd'];
+            while (nextPointIndex < points.length) {
+                var currentPoint = points[nextPointIndex];
+                var thisT = currentPoint['t_d'];
+                pointPool.push(currentPoint);
+                pointPool = pointPool.filter(function (pt) { return (thisT - pt['t_d']) < 6010 });
+                var smoothedPoint = {
+                    't': currentPoint['t'],
+                    't_d': currentPoint['t_d'],
+                    'lat': 0.0,
+                    'lon': 0.0,
+                    'el': 0.0,
+                    'spd': 0.0,                
+                };
+                var totalMultiplier = 0;
+                pointPool.forEach(function (pt) {
+                    var thisMultiplier = 7000 - (thisT - pt['t_d']);
+                    totalMultiplier += thisMultiplier
+                    typesToSmooth.forEach(function (tts) {
+                        smoothedPoint[tts] += pt[tts] * thisMultiplier;
+                    });
+                });
+                typesToSmooth.forEach(function (tts) {
+                    smoothedPoint[tts] = smoothedPoint[tts] / totalMultiplier;
+                });
+                smoothedPoints.push(smoothedPoint);
+                nextPointIndex++;
+            }
+
             // Reduce the set to a maximum of 640 for the elevation/speed graphs
             var sparsifiedPoints = [];
-            if (points.length < 645) {
-                sparsifiedPoints = points;
+            if (smoothedPoints.length < 645) {
+                sparsifiedPoints = smoothedPoints;
             } else {
-                sparsifiedPoints.push(points[0]);
+                sparsifiedPoints.push(smoothedPoints[0]);
                 var nextWholeNumber = 1;
-                var step = 640.0 / points.length;
+                var step = 640.0 / smoothedPoints.length;
                 var unsparseIndex = 1;
-                while (unsparseIndex < points.length) {
+                while (unsparseIndex < smoothedPoints.length) {
                     if ((unsparseIndex * step) > sparsifiedPoints.length) {
-                        sparsifiedPoints.push(points[unsparseIndex]);
+                        sparsifiedPoints.push(smoothedPoints[unsparseIndex]);
                     }
                     unsparseIndex++;
                 }
             }
 
             console.log(points);
+            console.log(smoothedPoints);
             console.log(sparsifiedPoints);
 
             var mapFrame = $("<div/>").attr("class", "ptws-googlemap").appendTo(jqRideLogDiv);
@@ -129,7 +163,7 @@ function initialize() {
 
             var map = new google.maps.Map(mapContainer.get(0), mapOptions);
 
-            var trackPoints = points.map(function (pt) { return new google.maps.LatLng(pt['lat'], pt['lon']); });
+            var trackPoints = smoothedPoints.map(function (pt) { return new google.maps.LatLng(pt['lat'], pt['lon']); });
 
             var border = new google.maps.Polyline({
                 clickable: true,
@@ -151,14 +185,14 @@ function initialize() {
             track.setMap(map);
             map.fitBounds(mapBounds);
 
-            var elevData  = sparsifiedPoints.map(function (pt) { return {x:pt['t'], y:pt['el']}; });
-            var spdData = sparsifiedPoints.map(function (pt) { return { x: pt['t'], y: pt['spd'] }; });
+            var elevData = sparsifiedPoints.map(function (pt) { return {x:pt['t'], y:pt['el']}; });
+            var spdData = sparsifiedPoints.map(function (pt) { return {x:pt['t'], y:pt['spd']}; });
 
             var chartContainerEl = chartContainer.get(0);
             var ctx = chartContainerEl.getContext('2d');
             var bgGradient = ctx.createLinearGradient(0, 0, 0, 140);
-            bgGradient.addColorStop(0, 'rgba(161, 255, 5, 0.8)');
-            bgGradient.addColorStop(1, 'rgba(161, 255, 5, 0.0)');
+            bgGradient.addColorStop(0, 'rgba(181, 255, 8, 0.5)');
+            bgGradient.addColorStop(1, 'rgba(181, 255, 8, 0.0)');
 
             var lineChartData = {
                 datasets: [{
