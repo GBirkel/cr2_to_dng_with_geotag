@@ -54,6 +54,8 @@ function initialize() {
     jQuery('div.ptws-ride-log').each(function (index, item) {
         var jqRideLogDiv = jQuery(item);
         var rideLogId = jqRideLogDiv.attr('rideid');
+        if (jqRideLogDiv.attr('ptwsinitialized')) { return; }
+        jqRideLogDiv.attr('ptwsinitialized', 1);
         var rawdata = {};
         // Check each div for any of these classes, and if there's a match,
         // grab the text content of the div, split it into an array, and save it.
@@ -136,10 +138,6 @@ function initialize() {
                 }
             }
 
-            console.log(points);
-            console.log(smoothedPoints);
-            console.log(sparsifiedPoints);
-
             var mapFrame = $("<div/>").attr("class", "ptws-googlemap").appendTo(jqRideLogDiv);
             var mapContainer = $("<div/>").appendTo(mapFrame);
 
@@ -191,8 +189,8 @@ function initialize() {
             var chartContainerEl = chartContainer.get(0);
             var ctx = chartContainerEl.getContext('2d');
             var bgGradient = ctx.createLinearGradient(0, 0, 0, 140);
-            bgGradient.addColorStop(0, 'rgba(181, 255, 8, 0.5)');
-            bgGradient.addColorStop(1, 'rgba(181, 255, 8, 0.0)');
+            bgGradient.addColorStop(0, 'rgba(181, 255, 16, 0.5)');
+            bgGradient.addColorStop(1, 'rgba(181, 255, 16, 0.0)');
 
             var lineChartData = {
                 datasets: [{
