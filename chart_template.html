@@ -56,6 +56,7 @@ function initialize() {
         var rideLogId = jqRideLogDiv.attr('rideid');
         if (jqRideLogDiv.attr('ptwsinitialized')) { return; }
         jqRideLogDiv.attr('ptwsinitialized', 1);
+
         var rawdata = {};
         // Check each div for any of these classes, and if there's a match,
         // grab the text content of the div, split it into an array, and save it.
@@ -65,7 +66,8 @@ function initialize() {
                 if (jQuery(subitem).hasClass(cl)) { rawdata[cl] = jQuery(subitem).text().split(','); }
             });
         });
-        // Check and see if we got divs with every needed class
+        // Check and see if we got divs with every needed class,
+        // and therefore have a full set of data for graphing.
         var hasAll = classesToCheck.filter(function (a) { return rawdata[a]; });
         if (hasAll.length == classesToCheck.length) {
             var turnTheseToFloat = ['lat', 'lon', 'el', 'spd'];
@@ -77,6 +79,8 @@ function initialize() {
             while (i < rawdata['t'].length) {
                 var point = {
                     't': rawdata['t'][i],
+                    // Date parsed as a real JS Date object, for use in further processing.
+                    // If we start working with questionable data, this may throw errors.
                     't_d': new Date(rawdata['t'][i]),
                     'lat': rawdata['lat_f'][i],
                     'lon': rawdata['lon_f'][i],
@@ -87,26 +91,37 @@ function initialize() {
                 i++;
             }
 
-            // Smooth points using their predecessors within a 7 second range
+            // Smooth points using their predecessors within a 7 second range.
+            // (Helps to prevent GPS hairballs from poor signal.)
 
             var smoothedPoints = [];
+            // A pool of all previously seen points that are within 6.01 seconds
+            // of the current point (including the current point).
             var pointPool = [];
             var nextPointIndex = 0;
+            // We will be handling all these attributes the same way
             var typesToSmooth = ['lat', 'lon', 'el', 'spd'];
             while (nextPointIndex < points.length) {
                 var currentPoint = points[nextPointIndex];
                 var thisT = currentPoint['t_d'];
                 pointPool.push(currentPoint);
+                // Drop any point older than 6.01 seconds.
+                // This way, large gaps in the recorded data halt the smoothing effect.
                 pointPool = pointPool.filter(function (pt) { return (thisT - pt['t_d']) < 6010 });
+                // Start with a template point that has all the
+                // attributes we wish to smooth zeroed out.
                 var smoothedPoint = {
                     't': currentPoint['t'],
-                    't_d': currentPoint['t_d'],
+                    't_d': thisT,
                     'lat': 0.0,
                     'lon': 0.0,
                     'el': 0.0,
                     'spd': 0.0,                
                 };
                 var totalMultiplier = 0;
+                // Add each point's attributes to the template point, multiplying them
+                // first by a 'force multiplier' based on the distance in time from the current point.
+                // The more distant the time (up to 6.01 seconds) the lower the force multiplier.
                 pointPool.forEach(function (pt) {
                     var thisMultiplier = 7000 - (thisT - pt['t_d']);
                     totalMultiplier += thisMultiplier
@@ -114,6 +129,9 @@ function initialize() {
                         smoothedPoint[tts] += pt[tts] * thisMultiplier;
                     });
                 });
+                // Divide the template attributes by the total force multiplier applied,
+                // to get values that make sense.  Basically, the new current point is like the
+                // old current point except it has ~6 seconds of "drag" applied to it.
                 typesToSmooth.forEach(function (tts) {
                     smoothedPoint[tts] = smoothedPoint[tts] / totalMultiplier;
                 });
@@ -138,12 +156,15 @@ function initialize() {
                 }
             }
 
+            // Container and div for the embedded Google map with the route.
             var mapFrame = $("<div/>").attr("class", "ptws-googlemap").appendTo(jqRideLogDiv);
             var mapContainer = $("<div/>").appendTo(mapFrame);
 
+            // Container and canvas for the Chart.js speed/elevation graph.
             var chartFrame = $("<div/>").attr("class", "ptws-elevation-chart").appendTo(jqRideLogDiv);
             var chartContainer = $("<canvas/>").attr("width", "640").attr("height", "140").appendTo(chartFrame);
 
+            // Calculate the center point and the outer bounds for the route.
             var latMin = Math.min.apply(0, rawdata['lat_f']);
             var latMax = Math.max.apply(0, rawdata['lat_f']);
             var lonMin = Math.min.apply(0, rawdata['lon_f']);
@@ -183,11 +204,14 @@ function initialize() {
             track.setMap(map);
             map.fitBounds(mapBounds);
 
+            // Format the elevation and speed data for Chart.js .
             var elevData = sparsifiedPoints.map(function (pt) { return {x:pt['t'], y:pt['el']}; });
             var spdData = sparsifiedPoints.map(function (pt) { return {x:pt['t'], y:pt['spd']}; });
 
             var chartContainerEl = chartContainer.get(0);
             var ctx = chartContainerEl.getContext('2d');
+            // A vertical gradient with two color stops, to fill in the
+            // background underneath the elevation line.
             var bgGradient = ctx.createLinearGradient(0, 0, 0, 140);
             bgGradient.addColorStop(0, 'rgba(181, 255, 16, 0.5)');
             bgGradient.addColorStop(1, 'rgba(181, 255, 16, 0.0)');
@@ -195,12 +219,15 @@ function initialize() {
             var lineChartData = {
                 datasets: [{
                     label: 'Elevation',
+                    // 'units' is not part of the Chart.js spec.
+                    // Kept here to be carried along and used by the tooltip UI.
                     units: 'm',
                     borderColor: 'rgb(130,171,42)',
                     pointBackgroundColor: 'rgb(130,171,42)',
                     backgroundColor: bgGradient,
                     borderWidth: 2,
-                    pointRadius: 0,
+                    pointRadius: 0, // No points
+                    // Virtual point size for mouseovers, used even when points are not rendered.
                     pointHitRadius: 3,
                     fill: true,
                     data: elevData,
@@ -224,20 +251,20 @@ function initialize() {
                 data: lineChartData,
                 options: {
                     responsive: true,
+                    // Display all values that fall on the hovered vertical index
                     hoverMode: 'index',
                     stacked: false,
-                    title: {
-                        display: false
-                    },
-                    legend: {
-                        display: false
-                    },
+                    // No title, no legend.
+                    title: { display: false },
+                    legend: { display: false },
                     tooltips: {
                         backgroundColor: 'rgba(255,255,255,255.8)',
                         titleFontColor: '#000',
                         bodyFontColor: '#000',
                         mode: 'index',
                         intersect: false,
+                        // Custom callback to alter the amounts shown in the tooltip,
+                        // specifically to tack on the units indicator.
                         callbacks: {
                             label: function (tooltipItems, data) {
                                 return data.datasets[tooltipItems.datasetIndex].label + ': ' + tooltipItems.yLabel + ' ' + data.datasets[tooltipItems.datasetIndex].units;
@@ -251,12 +278,9 @@ function initialize() {
                                 distribution: 'linear',
                                 tooltipFormat: 'h:mm a'
                             },
-                            scaleLabel: {
-                                display: false
-                            },
-                            gridLines: {
-                                display: false,
-                            }
+                            scaleLabel: { display: false },
+                            // Grid lines would just clutter a graph this small.
+                            gridLines: { display: false }
                         }],
                         yAxes: [
                             {
@@ -264,20 +288,14 @@ function initialize() {
                                 display: true,
                                 position: 'left',
                                 id: 'y-axis-1',
-                                gridLines: {
-                                    display: false,
-                                },
+                                gridLines: { display: false },
                             },
                             {
                                 type: 'linear',
                                 display: true,
                                 position: 'right',
                                 id: 'y-axis-2',
-
-                                // grid line settings
-                                gridLines: {
-                                    display: false,
-                                },
+                                gridLines: { display: false },
                             }
                         ],
                     }
