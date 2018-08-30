@@ -18,8 +18,7 @@
     background-color: #F8F8F8;
 }
 
-.ptws-ride-log > div.lat, .ptws-ride-log > div.lon, .ptws-ride-log > div.el,
-.ptws-ride-log > div.spd, .ptws-ride-log > div.t {
+.ptws-ride-log > div.data {
   display:none;
 }
 
@@ -57,25 +56,16 @@ function initialize() {
         if (jqRideLogDiv.attr('ptwsinitialized')) { return; }
         jqRideLogDiv.attr('ptwsinitialized', 1);
 
-        var rawdata = {};
-        // Check each div for any of these classes, and if there's a match,
-        // grab the text content of the div, split it into an array, and save it.
+        var rawDataStr = jQuery(jqRideLogDiv).children().first().text()
+        var rawdata = JSON.parse(rawDataStr);
+        // Check and see if we got JSON with every needed attribute,
+        // making a full set of data for graphing.
         var classesToCheck = ['lat','lon','el','t','spd'];
-        jqRideLogDiv.children().each(function (subindex, subitem) {
-            classesToCheck.forEach(function (cl) {
-                if (jQuery(subitem).hasClass(cl)) { rawdata[cl] = jQuery(subitem).text().split(','); }
-            });
-        });
-
-        // Check and see if we got divs with every needed class,
-        // and therefore have a full set of data for graphing.
         var hasAll = classesToCheck.filter(function (a) { return rawdata[a]; });
         if (hasAll.length != classesToCheck.length) { return; } // Can't use incomplete data sets
 
-        var turnTheseToFloat = ['lat', 'lon', 'el', 'spd'];
-        turnTheseToFloat.forEach(function (cl) {
-            rawdata[cl+"_f"] = rawdata[cl].map(function (m) { return  Number.parseFloat(m) });
-        });
+        // Convert the arrays into a series of point objects, like a minimal version of GPX.
+
         var points = [];
         var i = 0;
         while (i < rawdata['t'].length) {
@@ -84,10 +74,10 @@ function initialize() {
                 // Date parsed as a real JS Date object, for use in further processing.
                 // If we start working with questionable data, this may throw errors.
                 't_d': new Date(rawdata['t'][i]),
-                'lat': rawdata['lat_f'][i],
-                'lon': rawdata['lon_f'][i],
-                'el': rawdata['el_f'][i],
-                'spd': rawdata['spd_f'][i]
+                'lat': rawdata['lat'][i],
+                'lon': rawdata['lon'][i],
+                'el': rawdata['el'][i],
+                'spd': rawdata['spd'][i]
             };
             points.push(point);
             i++;
@@ -142,6 +132,7 @@ function initialize() {
         }
 
         // Reduce the set to a maximum of 640 for the elevation/speed graphs
+
         var sparsifiedPoints = [];
         if (smoothedPoints.length < 645) {
             sparsifiedPoints = smoothedPoints;

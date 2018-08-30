@@ -589,36 +589,8 @@ if i > 1:
 		continuous_ranges.append(new_range)
 print "Found " + str(len(continuous_ranges)) + " continuous ranges."
 
-# My thought was to export each newly made continuous segment as a GPX file,
-# but the content is anywhere from 4x to 8x larger.
-
-for r in continuous_ranges:
-	gpxContinuousRange = gpxpy.gpx.GPX()
-	gpxContinuousRange.tracks.append(gpxpy.gpx.GPXTrack())
-	gpxContinuousRange.tracks[0].segments.append(gpxpy.gpx.GPXTrackSegment())
-	i = r['start']
-	crStartTime = sorted_gpx_points[i]['t'].isoformat()
-	while i <= r['end']:
-		gpxContinuousRange.tracks[0].segments[0].points.append(sorted_gpx_points[i]['op'])
-		i += 1
-	crXml = gpxContinuousRange.to_xml()
-
-	chart_out_path = os.path.join(
-		chart_output_folder, 'output_template-' + crStartTime[:13] + '-gpx.html')
-
-	cofh = open(chart_out_path, "w")
-	cofh.write(template_html)
-
-	cofh.write("<div class='ptws-ride-log' rideid='" + crStartTime + "'>\n")
-	cofh.write(crXml + "\n")
-	cofh.write("</div>\n")
-
-	cofh.write("\n</body>\n</html>")
-
-	cofh.close()
-
-# Instead I am using a minimal JSON data format, breaking each type of data out into
-# separate arrays to eliminate the redundant field names.
+# Turn each range into a minimal JSON data format, breaking each type of data out
+# into separate arrays to eliminate the redundant field names.
 
 for r in continuous_ranges:
 	lat = []
@@ -632,24 +604,26 @@ for r in continuous_ranges:
 		lat.append(str(pt['lat']))
 		lon.append(str(pt['lon']))
 		el.append(str(pt['el']))
-		t.append(pt['t'].isoformat())
+		t.append('"' + pt['t'].isoformat() + '"')
 		spd.append(str(pt['spd']))
 		i += 1
 
-	chart_out_path = os.path.join(chart_output_folder, 'output_template-' + t[0][:13] + '.html')
+	chart_out_path = os.path.join(chart_output_folder, 'output_template-' + t[0][1:14] + '.html')
 
 	cofh = open(chart_out_path, "w")
 	cofh.write(template_html)
 
-	cofh.write("<div class='ptws-ride-log' rideid='" + t[0] + "'>\n")
+	cofh.write("<div class='ptws-ride-log' rideid='" + t[0] + "'>\n<div class='data'>\n")
 
-	cofh.write("<div class='lat'>" + ','.join(lat) + "</div>\n")
-	cofh.write("<div class='lon'>" + ','.join(lon) + "</div>\n")
-	cofh.write("<div class='el'>" + ','.join(el) + "</div>\n")
-	cofh.write("<div class='t'>" + ','.join(t) + "</div>\n")
-	cofh.write("<div class='spd'>" + ','.join(spd) + "</div>\n")
+	cofh.write("{\n")
+	cofh.write('"lat":[' + ','.join(lat) + "],\n")
+	cofh.write('"lon":[' + ','.join(lon) + "],\n")
+	cofh.write('"el":[' + ','.join(el) + "],\n")
+	cofh.write('"t":[' + ','.join(t) + "],\n")
+	cofh.write('"spd":[' + ','.join(spd) + "]\n")
+	cofh.write("}\n")
 
-	cofh.write("</div>\n")
+	cofh.write("</div>\n</div>\n")
 
 	cofh.write("\n</body>\n</html>")
 
