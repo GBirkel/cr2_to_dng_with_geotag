@@ -13,7 +13,7 @@
     border: #ccc 1px solid;
     border-radius: 10px;
     padding: 4px;
-    margin: 2px;
+    margin: 1.5em auto;
     width: 640px;
     background-color: #F8F8F8;
 }
@@ -48,8 +48,31 @@
 </style>
   <script type="text/javascript"> 
 
-var map = null;
+function doUpload() {
+    var jqRideLogDiv = jQuery('div.ptws-ride-log').first();
+    var rideLogId = jqRideLogDiv.attr('rideid');
+    var rawDataStr = jQuery(jqRideLogDiv).children().first().text()
+    rawDataStr = rawDataStr.replace(/\r?\n|\r/g, " ");
+
+    var data = {
+        'route': rawDataStr,
+        'id': rideLogId
+    };
+    console.log(data);
+    // We can also pass the url value separately from ajaxurl for front end AJAX implementations
+    jQuery.post('http://localhost/wp-json/ptws/v1/route', data, function (response) {
+        jQuery('div.responsebox').text(response);
+    });
+}
+
+
 function initialize() {
+    $('#uploadButton').click(function () { doUpload(); });
+
+    // Call the route parsing/display code in ptws.js
+
+    // ptws.findAndInitGPSLogDisplays();
+
     jQuery('div.ptws-ride-log').each(function (index, item) {
         var jqRideLogDiv = jQuery(item);
         var rideLogId = jqRideLogDiv.attr('rideid');
@@ -57,6 +80,7 @@ function initialize() {
         jqRideLogDiv.attr('ptwsinitialized', 1);
 
         var rawDataStr = jQuery(jqRideLogDiv).children().first().text()
+        rawDataStr = rawDataStr.replace(/\r?\n|\r/g, " ");
         var rawdata = JSON.parse(rawDataStr);
         // Check and see if we got JSON with every needed attribute,
         // making a full set of data for graphing.
@@ -150,18 +174,18 @@ function initialize() {
         }
 
         // Container and div for the embedded Google map with the route.
-        var mapFrame = $("<div/>").attr("class", "ptws-googlemap").appendTo(jqRideLogDiv);
-        var mapContainer = $("<div/>").appendTo(mapFrame);
+        var mapFrame = jQuery("<div/>").attr("class", "ptws-googlemap").appendTo(jqRideLogDiv);
+        var mapContainer = jQuery("<div/>").appendTo(mapFrame);
 
         // Container and canvas for the Chart.js speed/elevation graph.
-        var chartFrame = $("<div/>").attr("class", "ptws-elevation-chart").appendTo(jqRideLogDiv);
-        var chartContainer = $("<canvas/>").attr("width", "640").attr("height", "140").appendTo(chartFrame);
+        var chartFrame = jQuery("<div/>").attr("class", "ptws-elevation-chart").appendTo(jqRideLogDiv);
+        var chartContainer = jQuery("<canvas/>").attr("width", "640").attr("height", "140").appendTo(chartFrame);
 
         // Calculate the center point and the outer bounds for the route.
-        var latMin = Math.min.apply(0, rawdata['lat_f']);
-        var latMax = Math.max.apply(0, rawdata['lat_f']);
-        var lonMin = Math.min.apply(0, rawdata['lon_f']);
-        var lonMax = Math.max.apply(0, rawdata['lon_f']);
+        var latMin = Math.min.apply(0, rawdata['lat']);
+        var latMax = Math.max.apply(0, rawdata['lat']);
+        var lonMin = Math.min.apply(0, rawdata['lon']);
+        var lonMax = Math.max.apply(0, rawdata['lon']);
         var latCenter = (latMin + latMax) / 2;
         var lonCenter = (lonMin + lonMax) / 2;
 
@@ -260,7 +284,12 @@ function initialize() {
                     // specifically to tack on the units indicator.
                     callbacks: {
                         label: function (tooltipItems, data) {
-                            return data.datasets[tooltipItems.datasetIndex].label + ': ' + tooltipItems.yLabel + ' ' + data.datasets[tooltipItems.datasetIndex].units;
+                            // Truncate to two decimal places
+                            var re = new RegExp('^-?\\d+(?:\.\\d{0,2})?');
+                            var val = tooltipItems.yLabel;
+                            var m = val.toString().match(re);
+                            if (m) { val = m[0]; }
+                            return data.datasets[tooltipItems.datasetIndex].label + ': ' + val + ' ' + data.datasets[tooltipItems.datasetIndex].units;
                         }
                     }
                 },
@@ -302,5 +331,9 @@ function initialize() {
 <body onload="initialize();">
 
 <h1>Ride Log Template</h1>
+
+<input type=button value="Upload" name="uploadButton" id="uploadButton" />
+
+<div class="responsebox"></div>
 
 <!-- note: body and html tags are intentionally left off this template file -->

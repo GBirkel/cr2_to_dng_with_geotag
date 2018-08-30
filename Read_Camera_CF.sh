@@ -613,7 +613,8 @@ for r in continuous_ranges:
 	cofh = open(chart_out_path, "w")
 	cofh.write(template_html)
 
-	cofh.write("<div class='ptws-ride-log' rideid='" + t[0] + "'>\n<div class='data'>\n")
+	# t[0] has quotation marks built in already
+	cofh.write("<div class='ptws-ride-log' rideid=" + t[0] + ">\n<div class='data'>\n")
 
 	cofh.write("{\n")
 	cofh.write('"lat":[' + ','.join(lat) + "],\n")
