@@ -407,6 +407,7 @@ for gpx_file in valid_gps_files:
 				p['lon'] = point.longitude
 				p['el'] = point.elevation
 				p['spd'] = segment.get_speed(point_idx)
+				p['op'] = point
 				all_gpx_points.append(p)
 
 print "Sorting " + str(len(all_gpx_points)) + " GPX points."
@@ -587,6 +588,37 @@ if i > 1:
 		new_range['end'] = i-1
 		continuous_ranges.append(new_range)
 print "Found " + str(len(continuous_ranges)) + " continuous ranges."
+
+# My thought was to export each newly made continuous segment as a GPX file,
+# but the content is anywhere from 4x to 8x larger.
+
+for r in continuous_ranges:
+	gpxContinuousRange = gpxpy.gpx.GPX()
+	gpxContinuousRange.tracks.append(gpxpy.gpx.GPXTrack())
+	gpxContinuousRange.tracks[0].segments.append(gpxpy.gpx.GPXTrackSegment())
+	i = r['start']
+	crStartTime = sorted_gpx_points[i]['t'].isoformat()
+	while i <= r['end']:
+		gpxContinuousRange.tracks[0].segments[0].points.append(sorted_gpx_points[i]['op'])
+		i += 1
+	crXml = gpxContinuousRange.to_xml()
+
+	chart_out_path = os.path.join(
+		chart_output_folder, 'output_template-' + crStartTime[:13] + '-gpx.html')
+
+	cofh = open(chart_out_path, "w")
+	cofh.write(template_html)
+
+	cofh.write("<div class='ptws-ride-log' rideid='" + crStartTime + "'>\n")
+	cofh.write(crXml + "\n")
+	cofh.write("</div>\n")
+
+	cofh.write("\n</body>\n</html>")
+
+	cofh.close()
+
+# Instead I am using a minimal JSON data format, breaking each type of data out into
+# separate arrays to eliminate the redundant field names.
 
 for r in continuous_ranges:
 	lat = []
