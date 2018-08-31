@@ -48,9 +48,10 @@ function doUpload(d, f) {
         'id': rideLogId,
         'key': ptws_route_api_key
     };
+    var successOrFail = function (response) { jQuery(f).text(response); };
     // We can also pass the url value separately from ajaxurl for front end AJAX implementations
-    jQuery.post('https://mile42.net/wp-json/ptws/v1/route', data, function (response) {
-        jQuery(f).text(response);
+    jQuery.post('https://mile42.net/wp-json/ptws/v1/route', data, successOrFail).fail(function (r) {
+        successOrFail(r.responseText);
     });
 }
 
