@@ -392,6 +392,8 @@ if len(valid_gps_files) < 1:
 # this will make a mess.  But this is a single-user script and that situation is beyond the design spec.
 
 all_gpx_points = []
+prev_el = None
+prev_speed = None
 
 for gpx_file in valid_gps_files:
 	gpx = gpxpy.parse(open(gpx_file, 'r'))
@@ -408,7 +410,21 @@ for gpx_file in valid_gps_files:
 				p['el'] = point.elevation
 				p['spd'] = segment.get_speed(point_idx)
 				p['op'] = point
-				all_gpx_points.append(p)
+				
+				# Elevation and speed might be unset, so take them from the previous point, if one exists.
+				if p['el'] is not None:
+					prev_el = p['el']
+				elif prev_el is not None:
+					p['el'] = prev_el
+				if p['spd'] is not None:
+					prev_speed = p['spd']
+				elif prev_speed is not None:
+					p['spd'] = prev_speed
+
+				# If we could not set elevation or speed (if this is the 0th point) reject the point entirely.
+				if (p['spd'] is not None) and (p['el'] is not None):
+					all_gpx_points.append(p)
+					last_point = p
 
 print "Sorting " + str(len(all_gpx_points)) + " GPX points."
 
@@ -592,6 +608,11 @@ print "Found " + str(len(continuous_ranges)) + " continuous ranges."
 # Turn each range into a minimal JSON data format, breaking each type of data out
 # into separate arrays to eliminate the redundant field names.
 
+chart_out_path = os.path.join(chart_output_folder, 'route_gallery.html')
+
+cofh = open(chart_out_path, "w")
+cofh.write(template_html)
+
 for r in continuous_ranges:
 	lat = []
 	lon = []
@@ -608,11 +629,6 @@ for r in continuous_ranges:
 		spd.append(str(pt['spd']))
 		i += 1
 
-	chart_out_path = os.path.join(chart_output_folder, 'output_template-' + t[0][1:14] + '.html')
-
-	cofh = open(chart_out_path, "w")
-	cofh.write(template_html)
-
 	# t[0] has quotation marks built in already
 	cofh.write("<div class='ptws-ride-log' rideid=" + t[0] + ">\n<div class='data'>\n")
 
@@ -626,8 +642,7 @@ for r in continuous_ranges:
 
 	cofh.write("</div>\n</div>\n")
 
-	cofh.write("\n</body>\n</html>")
-
-	cofh.close()
+cofh.write("\n</body>\n</html>")
+cofh.close()
 
 print "Done."
