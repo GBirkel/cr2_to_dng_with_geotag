@@ -34,6 +34,9 @@ div.ride_manage_feedback {
 </style>
   <script type="text/javascript"> 
 
+// Make sure this is set the same as the "route upload API secret" in the admin section.
+var ptws_route_api_key = 'CHANGE THIS';
+
 function doUpload(d, f) {
     var jqRideLogDiv = jQuery(d).first();
     var rideLogId = jqRideLogDiv.attr('rideid');
@@ -42,7 +45,8 @@ function doUpload(d, f) {
 
     var data = {
         'route': rawDataStr,
-        'id': rideLogId
+        'id': rideLogId,
+        'key': ptws_route_api_key
     };
     // We can also pass the url value separately from ajaxurl for front end AJAX implementations
     jQuery.post('https://mile42.net/wp-json/ptws/v1/route', data, function (response) {
