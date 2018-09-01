@@ -567,7 +567,7 @@ else:
 # will change based on the time zone, so breaking across days is cumbersome, especially
 # if the rider rides past midnight.
 
-template_file_h = open("chart_template.html", "r")
+template_file_h = open("route_template.html", "r")
 template_html = template_file_h.read()
 
 if not os.path.isdir(chart_output_folder):
