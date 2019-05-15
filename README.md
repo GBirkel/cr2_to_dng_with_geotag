@@ -6,7 +6,7 @@ This is a Python script that does the following:
 * Pull track data from a Garmin Edg 500 or similar device, converting it to GPX along the way.
 * Use the GPX data to geotag the DNG files, taking time zone into account.
 * If there is geolocation data already in the DNG from the camera, leave it as-is.
-* Create an HTML page with a gallery of the GPS routes mapped onto maps from Mapbox using Leaflet, and an upload button to send each route to a Wordpress blog.  (Note, this functionality is badly documented and relies on https://github.com/GBirkel/ptws_wordpress_customizations )
+* Create an HTML page with a gallery of the GPS routes mapped onto maps from Mapbox using Leaflet, and an upload button to send each route to a Wordpress blog.  (Note, this functionality is badly documented and relies on [my WordPress customizations plugin] (https://github.com/GBirkel/ptws_wordpress_customizations) so you will need to tinker with it to make it work.)
 
 ## Why this exists
 
@@ -20,27 +20,28 @@ This script is only compatible with MacOS but perhaps it can serve as a referenc
 
 ## Actions performed by the script, in detail
 
-1. Check for required tools/folders
-2. Look for a media card (by looking for a specific volume) and locate CR2 image files on it
-3. Look for a Garmin volume and locate FIT data files on it
+1. Check for required tools/folders.
+2. Look for a media card (by looking for a specific volume) and locate CR2 image files on it.
+3. Look for a Garmin volume and locate FIT data files on it.
 
-If image files are present:
+If image files are present on a card:
 
-4. Modify the filename to show the capture date from the EXIF tag
-5. Check if a DNG image with the same filename and the same capture date exists in the target folder, and skip if so
-6. Convert the image to DNG, into target folder
-7. Move the image to an "archived" folder on the media card
+4. Modify the filename to show the capture date from the EXIF tag.
+5. Check if a DNG image with the same filename and the same capture date exists in the target folder, and skip if so.
+6. Convert the image to DNG, into target folder.
+7. Move the image to an "archived" folder on the media card.
 
-If GPS data files are present:
+If GPS data files are present on a device:
 
-8. Convert them to GPX, auto-splitting the activities if there is a 4-hour gap
-9. Rename the original files to flag that they were processed
+8. Convert them to GPX, auto-splitting the activities if there is a 4-hour gap.
+9. Rename the original files to flag that they were processed.
+10. Create an HTML gallery page with each activity plotted on a map.
 
 If there are DNG files in the target folder, from this run or an earlier one:
 
-10. Find any that are missing EXIF geotag data 
-11. Look for GPX data files (from this run or an earlier one)
-12. If any of the track times overlap the image time, geotag the image
+11. Find any that are missing EXIF geotag data.
+12. Read in all GPX data files, from this run or an earlier one.
+13. If any of the track times overlap the image time, geotag the image with a point between the nearest two points.
 
 ***
 
