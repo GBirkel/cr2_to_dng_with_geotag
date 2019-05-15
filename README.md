@@ -6,6 +6,7 @@ This is a Python script that does the following:
 * Pull track data from a Garmin Edg 500 or similar device, converting it to GPX along the way.
 * Use the GPX data to geotag the DNG files, taking time zone into account.
 * If there is geolocation data already in the DNG from the camera, leave it as-is.
+* Create an HTML page with a gallery of the GPS routes mapped onto maps from Mapbox using Leaflet, and an upload button to send each route to a Wordpress blog.  (Note, this functionality is badly documented and relies on https://github.com/GBirkel/ptws_wordpress_customizations )
 
 ## Why this exists
 
