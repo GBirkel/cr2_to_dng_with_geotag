@@ -50,7 +50,7 @@ function doUpload(d, f) {
     };
     var successOrFail = function (response) { jQuery(f).text(response); };
     // We can also pass the url value separately from ajaxurl for front end AJAX implementations
-    jQuery.post('https://mile42.net/wp-json/ptws/v1/route', data, successOrFail).fail(function (r) {
+    jQuery.post('https://mile42.net/wp-json/ptws/v1/route/create', data, successOrFail).fail(function (r) {
         successOrFail(r.responseText);
     });
 }

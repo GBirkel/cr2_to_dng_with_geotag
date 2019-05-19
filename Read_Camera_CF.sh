@@ -15,8 +15,8 @@ card_volume = "/Volumes/EOS_DIGITAL"
 card_archive_folder = card_volume + "/archived"
 
 dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"	# For DNG files converted from CR2 files
-gps_files_folder = "/Users/gbirkel/Documents/GPS"	# For GPX files from the GPS, to use for assigning geotags
-chart_output_folder = "/Users/gbirkel/Documents/GPS/chart_output"	# For generating map+graph pages
+gps_files_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For GPX files from the GPS, to use for assigning geotags
+chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For generating map+graph pages
 
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
