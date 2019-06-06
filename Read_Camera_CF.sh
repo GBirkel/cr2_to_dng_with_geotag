@@ -4,6 +4,8 @@ import os, sys, re
 import shutil
 import subprocess
 import gpxpy
+import json
+import hashlib
 from datetime import datetime, tzinfo, timedelta
 
 #
@@ -115,49 +117,56 @@ def pretty_datetime(t):
 # The creation date from the camera, the time zone currently set,
 # and the active status of the GPS device in the camera while shooting.
 def get_exif_bits_from_file(file_pathname):
-	gps_stat_out = subprocess.check_output(
-		exiftool + " -a -s -GPSStatus -TimeZone -SubSecCreateDate " + file_pathname, shell=True)
-	exif_d = {}
+	exif_out = subprocess.check_output(
+		exiftool + " -a -s -j " +
+			"-GPSStatus -TimeZone -ImageSize -SubSecCreateDate " +
+			"-Source -SpecialInstructions -OriginalTransmissionReference " +
+			file_pathname, shell=True)
+	exif_parsed = json.loads(exif_out)
+	exif_json = exif_parsed[0]
+	results = {}
 
-	parts = gps_stat_out.split('SubSecCreateDate')
-	date_and_time_tag = parts[1].strip(' \t\n\r:')
+	date_and_time_tag = exif_json['SubSecCreateDate']
 	d, t = date_and_time_tag.split(" ")
 	df = re.sub(':', '-', d)
 	tf = re.sub('[:\.]', '-', t)
-
-	parts_b = parts[0].split('TimeZone')
-	time_zone_tag = parts_b[1].strip(' \t\n\r:')
 
 	# Parse the non-time-zone portion of the date string.
 	# This is the easy part.
 	# Most of the rest of this function is for taking the time zone into account.
 	date_and_time_as_datetime = datetime.strptime(date_and_time_tag[:22], "%Y:%m:%d %H:%M:%S.%f")
 
-	# This is where the difference in Canon firmware as mentioned in the README comes into play.
+	# Time zone parsing.  This is where the difference in Canon firmware as mentioned in the README comes into play.
 
 	# We will key off the length of the SubSecCreateDate tag to determine what to do.
 	if len(date_and_time_tag) > 22:
 		# Seems to have time zone info.  Isolate it so it works with our parser. 
 		tz_to_parse = date_and_time_tag[22:]
-	else:
+		found_tz = True
+	elif 'TimeZone' in exif_json:
 		# Not long enough to have time zone info.  Use the TimeZone tag.
-		tz_to_parse = time_zone_tag
-
-	# Parse the time zone offset string into an offset in seconds
-	# (Code adapted from dateutil.)
-	tz_to_parse = tz_to_parse.strip()
-	tz_as_offset = 0
-	tz_without_modifier = tz_to_parse
-	if tz_to_parse[0] in ('+', '-'):
-		signal = (-1, +1)[tz_to_parse[0] == '+']
-		tz_without_modifier = tz_to_parse[1:]
+		tz_to_parse = exif_json['TimeZone']
+		found_tz = True
 	else:
-		signal = +1
-	tz_without_modifier = re.sub(':', '', tz_without_modifier)
-	if len(tz_without_modifier) == 4:
-		tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:])*60) * signal
-	elif len(tz_without_modifier) == 6:
-		tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:4])*60 + int(tz_without_modifier[4:])) * signal
+		tz_to_parse = None
+		found_tz = False
+
+	tz_as_offset = 0
+	if tz_to_parse:
+		# Parse the time zone offset string into an offset in seconds
+		# (Code adapted from dateutil.)
+		tz_to_parse = tz_to_parse.strip()
+		tz_without_modifier = tz_to_parse
+		if tz_to_parse[0] in ('+', '-'):
+			signal = (-1, +1)[tz_to_parse[0] == '+']
+			tz_without_modifier = tz_to_parse[1:]
+		else:
+			signal = +1
+		tz_without_modifier = re.sub(':', '', tz_without_modifier)
+		if len(tz_without_modifier) == 4:
+			tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:])*60) * signal
+		elif len(tz_without_modifier) == 6:
+			tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:4])*60 + int(tz_without_modifier[4:])) * signal
 
 	# Create an object of a tzinfo-derived class to hold the time zone info,
 	# as required by datetime.
@@ -166,20 +175,41 @@ def get_exif_bits_from_file(file_pathname):
 	# Replace the time zone info object with our own
 	date_and_time_as_datetime = date_and_time_as_datetime.replace(tzinfo=tz_offset_tzinfo)
 
-	has_gps = "Active" in gps_stat_out
+	source = None
+	if 'Source' in exif_json:
+		source = exif_json['Source']
+	specinstructions = None
+	if 'SpecialInstructions' in exif_json:
+		specinstructions = exif_json['SpecialInstructions']
+	transmissionref = None
+	if 'OriginalTransmissionReference' in exif_json:
+		transmissionref = exif_json['OriginalTransmissionReference']
+
+	has_gps = False
+	if 'GPSStatus' in exif_json:
+		if 'Active' in exif_json['GPSStatus']:
+			has_gps = True
 
 	file_name = file_pathname.split('/')[-1]
 	file_name_no_ext = ''.join(file_name.split('.')[0:-1])
 
-	exif_d['date_as_str'] = df
-	exif_d['date_and_time'] = df + " " + t
-	exif_d['date_and_time_as_datetime'] = date_and_time_as_datetime
-	exif_d['form_date'] = df + "_" + tf
-	exif_d['has_gps'] = has_gps
-	exif_d['file_name'] = file_name
-	exif_d['file_name_no_ext'] = file_name_no_ext
+	results['found_time_zone'] = found_tz
+	results['date_as_str'] = df
+	results['date_and_time'] = df + " " + t
+	results['date_and_time_as_datetime'] = date_and_time_as_datetime
+	results['form_date'] = df + "_" + tf
 
-	return exif_d
+	results['has_gps'] = has_gps
+	results['image_dimensions'] = exif_json['ImageSize']
+
+	results['source'] = source
+	results['special_instructions'] = specinstructions
+	results['transmission_reference'] = transmissionref
+
+	results['file_name'] = file_name
+	results['file_name_no_ext'] = file_name_no_ext
+
+	return results
 
 #
 # Phase 1: Import new FIT files from GPS device (and convert to GPX)
@@ -258,40 +288,40 @@ if len(files_list) > 0:
 
 	for original in files_list:
 
-		xf = get_exif_bits_from_file(original)
+		exif_bits = get_exif_bits_from_file(original)
 
-		target_file = xf['form_date'] + "_" + xf['file_name_no_ext'] + ".dng"
+		target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
 
-		xf['target_file_name'] = target_file
-		xf['target_file_pathname'] = os.path.join(dng_folder, target_file)
-		xf['gps_added'] = False
+		exif_bits['target_file_name'] = target_file
+		exif_bits['target_file_pathname'] = os.path.join(dng_folder, target_file)
+		exif_bits['gps_added'] = False
 
 		# If the target file exists AND the datestamp in the EXIF matches exactly,
 		# consider this file already processed.
-		xf['target_exif'] = {}
-		if not os.path.exists(xf['target_file_pathname']):
-			xf['target_exists'] = False
-			xf['already_converted'] = False
+		exif_bits['target_exif'] = {}
+		if not os.path.exists(exif_bits['target_file_pathname']):
+			exif_bits['target_exists'] = False
+			exif_bits['already_converted'] = False
 		else:
-			txf = get_exif_bits_from_file(xf['target_file_pathname'])
-			xf['target_exists'] = True
-			xf['target_exif'] = txf
-			xf['already_converted'] = xf['target_exif']['form_date'] == xf['form_date']
+			texif_bits = get_exif_bits_from_file(exif_bits['target_file_pathname'])
+			exif_bits['target_exists'] = True
+			exif_bits['target_exif'] = texif_bits
+			exif_bits['already_converted'] = exif_bits['target_exif']['form_date'] == exif_bits['form_date']
 			# Save this for later so we don't have to read it twice
-			target_file_exif_data[xf['target_file_pathname']] = txf
+			target_file_exif_data[exif_bits['target_file_pathname']] = texif_bits
 
-		if xf['has_gps']:
+		if exif_bits['has_gps']:
 			has_gps_str = "   Has GPS "
 		else:
 			has_gps_str = "           "
-		if xf['already_converted']:
+		if exif_bits['already_converted']:
 			already_conv_str = "   Already Processed "
 		else:
 			already_conv_str = "                     "
 
-		print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['date_and_time_as_datetime']) + has_gps_str + already_conv_str
+		print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str + already_conv_str
 
-		if xf['already_converted']:
+		if exif_bits['already_converted']:
 			already_processed.append(original)
 		else:
 			newly_processed.append(original)
@@ -305,7 +335,7 @@ if len(files_list) > 0:
 				'-d',		# Output directory
 				"\"" + dng_folder + "\"",
 				'-o',		# Output file
-				"\"" + xf['target_file_name'] + "\"",
+				"\"" + exif_bits['target_file_name'] + "\"",
 				"\"" + original + "\""	# Input file is last
 			]
 
@@ -321,17 +351,17 @@ if len(files_list) > 0:
 
 			# Now there's a target file with the same EXIF data as the original,
 			# So we save the EXIF data we pulled from the original under a reference to the target.
-			target_file_exif_data[xf['target_file_pathname']] = xf
+			target_file_exif_data[exif_bits['target_file_pathname']] = exif_bits
 
-			archive_path = os.path.join(card_archive_folder, xf['date_as_str'])
+			archive_path = os.path.join(card_archive_folder, exif_bits['date_as_str'])
 			if not os.path.isdir(archive_path):
 				os.makedirs(archive_path)
 
-			archive_pathname = os.path.join(archive_path, xf['file_name'])
+			archive_pathname = os.path.join(archive_path, exif_bits['file_name'])
 			print 'moving "' + original + '" to "' + archive_pathname + '"'
 			shutil.move(original, archive_pathname)
 
-		all_exif_data[original] = xf
+		all_exif_data[original] = exif_bits
 
 	print "Already verified processed: " + str(len(already_processed))
 	print "Newly Processed: " + str(len(newly_processed))
@@ -339,7 +369,68 @@ if len(files_list) > 0:
 	print "Moved to archive folder: " + str(len(to_move))
 
 #
-# Phase 3: Locate and parse all GPX files in working folder (from this or previous sessions)
+# Phase 2-b: Locate pre-existing DNG files and read their EXIF tags as well
+#
+
+dng_list = look_for_files(dng_folder + "/*.dng")
+if len(dng_list) < 1:
+    	print "No DNG files found in target folder."
+else:
+	print "Found " + str(len(dng_list)) + " DNG files."
+
+	# Fetch EXIF data for any DNGs that we haven't already
+	# (That would be all the DNGs that were in the target folder already
+	#  and didn't have filenames matching CR2s)
+	additional_exif_fetches = 0
+	for dng_file in dng_list:
+		if not target_file_exif_data.has_key(dng_file):
+
+			exif_bits = get_exif_bits_from_file(dng_file)
+			if exif_bits['has_gps']:
+				has_gps_str = "   Has GPS "
+			else:
+				has_gps_str = "           "
+			print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str
+
+			target_file_exif_data[dng_file] = exif_bits
+			additional_exif_fetches = additional_exif_fetches + 1
+	if additional_exif_fetches > 0:
+		print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files."
+
+#
+# Phase 3: Ensure that a reasonably unique identifier is embedded in all found photos
+#
+
+if len(dng_list) < 1:
+    	print "Skipping unique ID stage."
+else:
+	print "Starting unique ID stage."
+	# Filter out DNGs with content in their SpecialInstructions EXIF tags.
+	dngs_without_ids = []
+	for dng_file in dng_list:
+		if not target_file_exif_data[dng_file]['special_instructions']:
+			dngs_without_ids.append(dng_file)
+	if len(dngs_without_ids) < 1:
+		print "All DNG files have unique ID tags.  Skipping unique ID stage."
+	else:
+		print "Found " + str(len(dngs_without_ids)) + " DNG files without unique IDs."
+
+		for dng_file in dngs_without_ids:
+			exif_bits = target_file_exif_data[dng_file]
+
+			hash_id_object = exif_bits['file_name'] + exif_bits['form_date'] + exif_bits['image_dimensions']
+			calcualted_hash = hashlib.md5(hash_id_object.encode())
+			hash_id_string = calcualted_hash.hexdigest()
+
+			exif_id_embed_args = [
+				'-SpecialInstructions="' + hash_id_string + '"',
+				'"' + dng_file + '"'
+			]
+			exif_id_embed_cmd = exiftool + " " + ' '.join(exif_id_embed_args)
+			exif_id_embed_out = subprocess.check_output(exif_id_embed_cmd, shell=True)
+
+#
+# Phase 4: Locate and parse all GPX files in working folder (from this or previous sessions)
 #
 
 gpx_list = look_for_files(gps_files_folder + "/*.gpx")
@@ -431,37 +522,13 @@ print "Sorting " + str(len(all_gpx_points)) + " GPX points."
 sorted_gpx_points = sorted(all_gpx_points, key=lambda x: x['t'], reverse=False)
 
 #
-# Phase 4: Locate all DNG files in working folder (from this or previous sessions)
-#          without GPS tags, and tag them if possible.
+# Phase 5: Examine all DNG files without GPS tags, and tag them if possible.
 #
 
-# Look for DNG files in the target folder
-
-dng_list = look_for_files(dng_folder + "/*.dng")
 if len(dng_list) < 1:
-	print "No DNG files found in target folder.  Skipping geotag stage."
+	print "Skipping geotag stage."
 else:
-	print "Found " + str(len(dng_list)) + " DNG files."
-
-	# Fetch EXIF data for any DNGs that we haven't already
-	# (That would be all the DNGs that were in the target folder already
-	#  and didn't have filenames matching CR2s)
-	additional_exif_fetches = 0
-	for dng_file in dng_list:
-		if not target_file_exif_data.has_key(dng_file):
-
-			xf = get_exif_bits_from_file(dng_file)
-			if xf['has_gps']:
-				has_gps_str = "   Has GPS "
-			else:
-				has_gps_str = "           "
-			print xf['file_name_no_ext'] + ":   Date: " + pretty_datetime(xf['date_and_time_as_datetime']) + has_gps_str
-
-			target_file_exif_data[dng_file] = xf
-			additional_exif_fetches = additional_exif_fetches + 1
-	if additional_exif_fetches > 0:
-		print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files."
-
+	print "Starting geotag stage."
 	# Filter out DNGs with valid GPS data in their EXIF tags.
 	dngs_without_gps = []
 	for dng_file in dng_list:
@@ -473,8 +540,8 @@ else:
 		print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
 
 		for dng_file in dngs_without_gps:
-			xf = target_file_exif_data[dng_file]
-			photo_dt = xf['date_and_time_as_datetime']
+			exif_bits = target_file_exif_data[dng_file]
+			photo_dt = exif_bits['date_and_time_as_datetime']
 			i = 0
 			found_highpoint = False
 			while i < len(sorted_gpx_points) and not found_highpoint:
@@ -490,7 +557,7 @@ else:
 			if i > 1 and i < (len(sorted_gpx_points)-1):
 				found_midpoint = True
 			if not found_midpoint:
-				print xf['file_name_no_ext'] + ": No points within range."
+				print exif_bits['file_name_no_ext'] + ": No points within range."
 			else:
 				photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
 
@@ -499,7 +566,7 @@ else:
 				delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
 				delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
 				if delta_during > gap or delta_before > gap or delta_after > gap:
-					print xf['file_name_no_ext'] + ": Falls on a gap larger than 20 seconds."
+					print exif_bits['file_name_no_ext'] + ": Falls on a gap larger than 20 seconds."
 				else:
 
 					# In GPX files, latitude and longitude are supplied as decimal degrees
@@ -543,7 +610,7 @@ else:
 					if el_calc < 0:
 						el_ref = "Below Sea Level"
 
-					print xf['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
+					print exif_bits['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
 							str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + " " + el_ref
 
 					exif_gps_embed_args = [
@@ -560,7 +627,7 @@ else:
 					exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 #
-# Phase 5: Use curent stock of GPX data to generate embeddable data for an inline google map
+# Phase 6: Use current stock of GPX data to generate embeddable data for an inline google map
 #          and an inline jsChart, broken across gaps in recording larger than six hours
 
 # The "larger than six hour break" rule is needed because the beginning and ending of each day
