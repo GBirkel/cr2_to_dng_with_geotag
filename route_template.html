@@ -13,15 +13,16 @@
 <style>
 
 .ride_title {
-    margin-left:2.5em;
+    margin-left:30px;
 }
 
 div.ride_code {
-    margin-left:2.5em;
+	font-family: monospace;
+    margin-left:30px;
 }
 
 div.ride_manage {
-    margin-left:2.5em;
+    margin-left:30px;
     display:flex;
     flex-direction:row;
 }
@@ -63,18 +64,20 @@ function initialize() {
         var rideLogId = jqRideLogDiv.attr('rideid');
 
         var routeName = jQuery("<h1/>").attr("class", "ride_title").insertBefore(jqRideLogDiv);
-
-        routeName.text(rideLogId);
+        routeName.text((index+1) + ": " + rideLogId);
 
         var codePanel = jQuery("<div/>").attr("class", "ride_code").insertAfter(routeName);
-
         codePanel.text('[ptwsroute routeid="' + rideLogId + '"]');
 
-        var managePanel = jQuery("<div/>").attr("class", "ride_manage").insertAfter(codePanel);
+        var codePanelB = jQuery("<div/>").attr("class", "ride_code").insertAfter(codePanel);
+        codePanelB.text('./Route_Upload.sh -i ' + (index+1));
+
+        var managePanel = jQuery("<div/>").attr("class", "ride_manage").insertAfter(codePanelB);
         var firstPanel = jQuery("<div/>").appendTo(managePanel);
-        var uploadButton = jQuery("<input/>").attr("type", "button").attr("name", "Upload").attr("value", "Upload").appendTo(firstPanel);
+        // Disabling, since POST memory limits prevent direct upload now.
+        //var uploadButton = jQuery("<input/>").attr("type", "button").attr("name", "Upload").attr("value", "Upload").appendTo(firstPanel);
         var secondPanel = jQuery("<div/>").attr("class", "ride_manage_feedback").appendTo(managePanel);
-        uploadButton.click(function () { doUpload(jqRideLogDiv.get(0), secondPanel.get(0)); });
+        //uploadButton.click(function () { doUpload(jqRideLogDiv.get(0), secondPanel.get(0)); });
     });
 
     // PTWS will call this for us.

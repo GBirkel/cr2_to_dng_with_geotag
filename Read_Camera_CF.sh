@@ -34,8 +34,14 @@ if not os.path.exists(exiftool):
 if not os.path.exists(gpsbabel):
 	print "Install gpsbabel with \"brew install gpsbabel\", please."
 	exit()
+if not os.path.isdir(gps_files_folder):
+	print "Cannot find gps_files_folder at: " + gps_files_folder + " ."
+	exit()
+if not os.path.isdir(chart_output_folder):
+	print "Cannot find chart_output_folder folder at: " + chart_output_folder + " ."
+	exit()
 if not os.path.isdir(dng_folder):
-	print "Cannot find file out path " + dng_folder + " ."
+	print "Cannot find dng_folder folder at: " + dng_folder + " ."
 	exit()
 
 
@@ -126,7 +132,7 @@ def get_exif_bits_from_file(file_pathname):
 	exif_json = exif_parsed[0]
 	results = {}
 
-	date_and_time_tag = exif_json['SubSecCreateDate']
+	date_and_time_tag = exif_json['SubSecCreateDate'].encode('ascii','ignore')
 	d, t = date_and_time_tag.split(" ")
 	df = re.sub(':', '-', d)
 	tf = re.sub('[:\.]', '-', t)
@@ -145,7 +151,7 @@ def get_exif_bits_from_file(file_pathname):
 		found_tz = True
 	elif 'TimeZone' in exif_json:
 		# Not long enough to have time zone info.  Use the TimeZone tag.
-		tz_to_parse = exif_json['TimeZone']
+		tz_to_parse = exif_json['TimeZone'].encode('ascii','ignore')
 		found_tz = True
 	else:
 		tz_to_parse = None
@@ -200,7 +206,7 @@ def get_exif_bits_from_file(file_pathname):
 	results['form_date'] = df + "_" + tf
 
 	results['has_gps'] = has_gps
-	results['image_dimensions'] = exif_json['ImageSize']
+	results['image_dimensions'] = exif_json['ImageSize'].encode('ascii','ignore')
 
 	results['source'] = source
 	results['special_instructions'] = specinstructions
@@ -676,15 +682,19 @@ print "Found " + str(len(continuous_ranges)) + " continuous ranges."
 # into separate arrays to eliminate the redundant field names.
 
 chart_out_path = os.path.join(chart_output_folder, 'route_gallery.html')
+json_out_path = os.path.join(chart_output_folder, 'route_gallery.json')
 
 cofh = open(chart_out_path, "w")
 cofh.write(template_html)
+
+gallery_json = []
 
 for r in continuous_ranges:
 	lat = []
 	lon = []
 	el = []
 	t = []
+	t_quoted = []
 	spd = []
 	i = r['start']
 	while i <= r['end']:
@@ -692,24 +702,33 @@ for r in continuous_ranges:
 		lat.append(str(pt['lat']))
 		lon.append(str(pt['lon']))
 		el.append(str(pt['el']))
-		t.append('"' + pt['t'].isoformat() + '"')
+		t.append(pt['t'].isoformat())
+		t_quoted.append('"' + pt['t'].isoformat() + '"')
 		spd.append(str(pt['spd']))
 		i += 1
 
 	# t[0] has quotation marks built in already
-	cofh.write("<div class='ptws-ride-log' rideid=" + t[0] + ">\n<div class='data'>\n")
+	cofh.write("<div class='ptws-ride-log' rideid=" + t_quoted[0] + ">\n<div class='data'>\n")
 
-	cofh.write("{\n")
-	cofh.write('"lat":[' + ','.join(lat) + "],\n")
-	cofh.write('"lon":[' + ','.join(lon) + "],\n")
-	cofh.write('"el":[' + ','.join(el) + "],\n")
-	cofh.write('"t":[' + ','.join(t) + "],\n")
-	cofh.write('"spd":[' + ','.join(spd) + "]\n")
-	cofh.write("}\n")
+	range_json_str = "{\n" + \
+					 '"lat":[' + ','.join(lat) + "],\n" + \
+					 '"lon":[' + ','.join(lon) + "],\n" + \
+					 '"el":[' + ','.join(el) + "],\n" + \
+					 '"t":[' + ','.join(t_quoted) + "],\n" + \
+					 '"spd":[' + ','.join(spd) + "]\n" + \
+					 "}\n"
 
+	cofh.write(range_json_str)
 	cofh.write("</div>\n</div>\n")
+
+	gallery_json.append([t[0], range_json_str])
 
 cofh.write("\n</body>\n</html>")
 cofh.close()
+
+gallery_json_obj = {}
+gallery_json_obj['a'] = gallery_json
+with open(json_out_path, 'w') as json_out_handle:
+    json.dump(gallery_json_obj, json_out_handle)
 
 print "Done."
