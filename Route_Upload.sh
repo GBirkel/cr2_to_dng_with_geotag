@@ -15,7 +15,6 @@ import hashlib
 api_seekrit = 'CHANGE THIS'
 route_upload_url = "https://mile42.net/wp-json/ptws/v1/route/create"
 
-gps_files_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For GPX files from the GPS, to use for assigning geotags
 chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For generating map+graph pages
 
 
@@ -55,19 +54,17 @@ def main(argv):
 		sys.exit(2)
 	print 'Index to upload is ', upload_index
 
-
-	if not os.path.isdir(gps_files_folder):
-		print "Cannot find folder gps_files_folder: " + gps_files_folder + " ."
-		exit()
-
 	if not os.path.isdir(chart_output_folder):
 		print "Cannot find folder chart_output_folder: " + chart_output_folder + " ."
 		exit()
 
-
 	tmp_in_path = os.path.join(chart_output_folder, 'route_gallery.json')
 	with open(tmp_in_path, 'r') as t_file_handle:
 		tdata = json.load(t_file_handle)
+
+	# To upload the whole set:
+	#for rt in tdata['a']:
+	#	route_upload_via_curl(rt[0], rt[1])
 
 	rt = tdata['a'][upload_index-1]
 	route_upload_via_curl(rt[0], rt[1])
