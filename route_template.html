@@ -36,6 +36,7 @@ div.ride_manage_feedback {
 // Make sure this is set the same as the "route upload API secret" in the admin section.
 var ptws_route_api_key = 'CHANGE THIS';
 
+// NOTE: This method is not used now.  See Route_Upload.sh for more explanation.
 function doUpload(d, f) {
     var jqRideLogDiv = jQuery(d).first();
     var rideLogId = jqRideLogDiv.attr('rideid');

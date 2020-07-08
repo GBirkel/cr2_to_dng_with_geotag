@@ -8,6 +8,18 @@ import gpxpy
 import json
 import hashlib
 
+# We can't upload route recordings directly from the route gallery web page,
+# since it runs afoul of a security restriction in Apache on the server side.
+# The problem is this:  Sending all the JSON as a regular multipart form element
+# runs afoul of mod_secrurity's "SecRequestBodyInMemoryLimit" value,
+# which was set in /dh/apache2/template/etc/mod_sec2/10_modsecurity_crs_10_config.conf
+# with the line "SecRequestBodyInMemoryLimit 131072".
+# This causes form submissions above a certain size to be rejected no matter what the
+# settings are for PHP or Wordpress.
+# So instead we use this command-line app to invoke "curl" which sends the data in the
+# form a file upload.  (This is something browsers are not allowed to do without
+# actually being handed a file by user interaction, for security reasons.)
+
 #
 # Customize before using:
 #
@@ -18,7 +30,7 @@ route_upload_url = "https://mile42.net/wp-json/ptws/v1/route/create"
 chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For generating map+graph pages
 
 
-# Support function to look for files on a given path
+# Support function to upload a given route id and route data
 def route_upload_via_curl(route_id, route_body):
 	tmp_out_path = os.path.join(chart_output_folder, 'temp_route_upload.txt')
 	to = open(tmp_out_path, "w")
