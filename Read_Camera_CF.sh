@@ -119,8 +119,8 @@ def pretty_datetime(t):
 	return date_str + ' ' + time_str + u_str
 
 
-# Support function to invoke exiftool and pull out and parse three pieces of data:
-# The creation date from the camera, the time zone currently set,
+# Support function to invoke exiftool and pull out and parse a collection of data,
+# including the creation date from the camera, the time zone currently set,
 # and the active status of the GPS device in the camera while shooting.
 def get_exif_bits_from_file(file_pathname):
 	exif_out = subprocess.check_output(
@@ -242,7 +242,7 @@ if os.path.exists(garmin_gps_volume):
 				'-f',					# Input file
 				fit_file,
 				'-x track,pack,split=4h,title="LOG # %c"',	# Split activities if gap is larger than 4 hours
-				'-o gpx',				# Output format
+				'-o gpx,garminextensions=1',				# Output format GPX with Garmin extensions
 				'-F',					# Output file
 				'"' + path_to_gpx + '"'
 			]
@@ -250,7 +250,7 @@ if os.path.exists(garmin_gps_volume):
 			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
 			# If we use move, MacOS will attempt to copy file permissions.
 			# On Garmin devices, FIT files are shown with permissions of 777.
-			# Since the executable permission is set, MacOS will try to copy it, which will fail due to system protection measures.
+			# Since the executable permission is set, MacOS will try to apply that, which will fail due to system protection measures.
 			# Trying to change the permissions on the source file in place will have no result.
 			# So we use copyfile instead, which does not attempt to set equivalent permissions, then remove the source file afterwards.
 			shutil.copyfile(fit_file, os.path.join(archive_path, base_name))
@@ -707,7 +707,6 @@ for r in continuous_ranges:
 		spd.append(str(pt['spd']))
 		i += 1
 
-	# t[0] has quotation marks built in already
 	cofh.write("<div class='ptws-ride-log' rideid=" + t_quoted[0] + ">\n<div class='data'>\n")
 
 	range_json_str = "{\n" + \
@@ -718,9 +717,11 @@ for r in continuous_ranges:
 					 '"spd":[' + ','.join(spd) + "]\n" + \
 					 "}\n"
 
+	# We write this JSON structure out twice:
+	# Once in the HTML file to display the routes in a gallery,
 	cofh.write(range_json_str)
 	cofh.write("</div>\n</div>\n")
-
+	# and once in a JSON file that we use as reference material for uploading the routes to the web
 	gallery_json.append([t[0], range_json_str])
 
 cofh.write("\n</body>\n</html>")
