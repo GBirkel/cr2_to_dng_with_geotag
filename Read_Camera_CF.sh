@@ -730,8 +730,12 @@ def main(argv):
 			t_quoted.append('"' + pt['t'].isoformat() + '"')
 			spd.append(str(pt['spd']))
 			i += 1
+		
+		range_identifier = t[0]
+		if do_not_split_gpx:
+			range_identifier = range_identifier.split('T')[0] + "-notsplit"
 
-		cofh.write("<div class='ptws-ride-log' rideid=" + t_quoted[0] + ">\n<div class='data'>\n")
+		cofh.write("<div class='ptws-ride-log' rideid=" + '"' + range_identifier + '"' + ">\n<div class='data'>\n")
 
 		range_json_str = "{\n" + \
 						'"lat":[' + ','.join(lat) + "],\n" + \
@@ -746,7 +750,7 @@ def main(argv):
 		cofh.write(range_json_str)
 		cofh.write("</div>\n</div>\n")
 		# and once in a JSON file that we use as reference material for uploading the routes to the web
-		gallery_json.append([t[0], range_json_str])
+		gallery_json.append([range_identifier, range_json_str])
 
 	cofh.write("\n</body>\n</html>")
 	cofh.close()
