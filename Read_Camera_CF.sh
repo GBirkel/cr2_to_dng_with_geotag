@@ -14,12 +14,19 @@ from datetime import datetime, tzinfo, timedelta
 #
 
 garmin_gps_volume = "/Volumes/GARMIN"
+#garmin_gps_volume = "/Users/gbirkel/Documents/Travel/GPS/Reprocess"
 card_volume = "/Volumes/EOS_DIGITAL"
+
 card_archive_folder = card_volume + "/archived"
 
-dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"	# For DNG files converted from CR2 files
-gps_files_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For GPX files from the GPS, to use for assigning geotags
-chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For generating map+graph pages
+# For DNG files converted from CR2 files
+#dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"
+dng_folder = "/Users/gbirkel/Pictures/Lightroom_Auto_Import_Folder"
+
+# For GPX files from the GPS, to use for assigning geotags
+gps_files_folder = "/Users/gbirkel/Documents/Travel/GPS"
+# For generating map+graph pages
+chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"
 
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
@@ -244,8 +251,9 @@ def main(argv):
 
 	if os.path.exists(garmin_gps_volume):
 		print "Found GPS path."
-		#fit_files = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")	# Edge 500
-		fit_files = look_for_files(garmin_gps_volume + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
+		e = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")	# Edge 500,530
+		f = look_for_files(garmin_gps_volume + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
+		fit_files = e + f
 		if len(fit_files) > 0:
 			# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
 			# causing them to be re-imported.
@@ -450,6 +458,7 @@ def main(argv):
 				hash_id_string = calcualted_hash.hexdigest()
 
 				exif_id_embed_args = [
+					'-overwrite_original',
 					'-SpecialInstructions="' + hash_id_string + '"',
 					'"' + dng_file + '"'
 				]
