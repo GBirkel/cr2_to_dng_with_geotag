@@ -17,7 +17,7 @@ import hashlib
 # This causes form submissions above a certain size to be rejected no matter what the
 # settings are for PHP or Wordpress.
 # So instead we use this command-line app to invoke "curl" which sends the data in the
-# form a file upload.  (This is something browsers are not allowed to do without
+# form of a file upload.  (This is something browsers are not allowed to do without
 # actually being handed a file by user interaction, for security reasons.)
 
 #

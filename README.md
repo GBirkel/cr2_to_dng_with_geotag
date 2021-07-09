@@ -21,7 +21,7 @@ This script is only compatible with MacOS but perhaps it can serve as a referenc
 ## Actions performed by the script, in detail
 
 1. Check for required tools/folders.
-2. Look for a media card (by looking for a specific volume) and locate CR2 image files on it.
+2. Look for a media card (by looking for a specific volume) and locate CR2/CR3 image files on it.
 3. Look for a Garmin volume and locate FIT data files on it.
 
 If image files are present on a card:

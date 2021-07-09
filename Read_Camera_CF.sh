@@ -19,7 +19,7 @@ card_volume = "/Volumes/EOS_DIGITAL"
 
 card_archive_folder = card_volume + "/archived"
 
-# For DNG files converted from CR2 files
+# For DNG files converted from CR files
 #dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"
 dng_folder = "/Users/gbirkel/Pictures/Lightroom_Auto_Import_Folder"
 
@@ -253,7 +253,8 @@ def main(argv):
 		print "Found GPS path."
 		e = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")	# Edge 500,530
 		f = look_for_files(garmin_gps_volume + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
-		fit_files = e + f
+		g = look_for_files(garmin_gps_volume + "/Garmin/Activity/*.fit")	# Edge 130+
+		fit_files = e + f + g
 		if len(fit_files) > 0:
 			# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
 			# causing them to be re-imported.
@@ -287,10 +288,10 @@ def main(argv):
 			print "Converted " + str(len(fit_files)) + " FIT files to GPX."
 
 	#
-	# Phase 2: Import new CR2 files from camera card device (and convert to DNG)
+	# Phase 2: Import new CR files from camera card device (and convert to DNG)
 	#
 
-	# If there is a card path, make sure the archive folder exists on it, and look for CR2 files.
+	# If there is a card path, make sure the archive folder exists on it, and look for CR files.
 	if not os.path.isdir(card_volume):
 		print "Cannot find card volume " + card_volume + " .  Skipping import stage."
 		files_list = []
@@ -305,12 +306,12 @@ def main(argv):
 			else:
 				print "Created image archive path " + card_archive_folder + " ."
 
-		# Look for CR2 files on the card
-		files_list = look_for_files(card_volume + "/DCIM/*/*.CR2")
+		# Look for CR files on the card
+		files_list = look_for_files(card_volume + "/DCIM/*/*.CR2") + look_for_files(card_volume + "/DCIM/*/*.CR3")
 		if len(files_list) > 0:
-			print "Found " + str(len(files_list)) + " CR2 files."
+			print "Found " + str(len(files_list)) + " CR files."
 		else:
-			print "No CR2 files found on card.  Skipping import stage."
+			print "No CR files found on card.  Skipping import stage."
 
 	# Save any target file EXIF data we read for later so we don't need to read it twice.
 	target_file_exif_data = {}
@@ -415,7 +416,7 @@ def main(argv):
 
 		# Fetch EXIF data for any DNGs that we haven't already
 		# (That would be all the DNGs that were in the target folder already
-		#  and didn't have filenames matching CR2s)
+		#  and didn't have filenames matching CRs)
 		additional_exif_fetches = 0
 		for dng_file in dng_list:
 			if not target_file_exif_data.has_key(dng_file):
