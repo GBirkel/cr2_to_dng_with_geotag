@@ -30,6 +30,8 @@ chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"
 
 # API to fetch short text comments for embedding in photos
 api_seekrit = 'CHANGE THIS'
+# Note that your camera's time must be set accurately, within a few seconds,
+# to catch comments made just after shooting.
 comment_fetch_url = "https://mile42.net/wp-json/ptws/v1/commentlog/unresolved"
 
 exiftool = "/usr/local/bin/exiftool"
