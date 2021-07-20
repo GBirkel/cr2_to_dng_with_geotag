@@ -28,6 +28,10 @@ gps_files_folder = "/Users/gbirkel/Documents/Travel/GPS"
 # For generating map+graph pages
 chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"
 
+# API to fetch short text comments for embedding in photos
+api_seekrit = 'CHANGE THIS'
+comment_fetch_url = "https://mile42.net/wp-json/ptws/v1/commentlog/unresolved"
+
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
 dngconverter = "/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter"
@@ -129,13 +133,45 @@ def pretty_datetime(t):
 	return date_str + ' ' + time_str + u_str
 
 
+# Support function to fetch a set of recent short comments from a database
+def get_recent_short_comments():
+	curl_command = 'curl -F key=\"' + api_seekrit + '\" ' + comment_fetch_url
+	fetch_out = '[]'
+	try:
+		fetch_out = subprocess.check_output(curl_command, shell=True)
+	except subprocess.CalledProcessError:
+		print "Error fetching recent comments!"
+
+	exif_parsed = json.loads(fetch_out)
+	all_comments = []
+
+	for comment in exif_parsed:
+		p = {}
+
+		c = comment['composition_time'].encode('ascii','ignore')
+		c_parsed = datetime.strptime(c, "%Y-%m-%d %H:%M:%S")
+		# Assuming GMT.
+		tz_offset_tzinfo = fancytzoffset('+00:00', 0)
+		# Replace the time zone info object with our own
+		c_parsed = c_parsed.replace(tzinfo=tz_offset_tzinfo)
+
+		p['id'] = comment['id'].encode('ascii','ignore')
+		p['content'] = comment['content'].encode('ascii','ignore')
+		p['composition_time'] = c
+		p['composition_time_parsed'] = c_parsed
+					
+		all_comments.append(p)
+
+	return all_comments
+
+
 # Support function to invoke exiftool and pull out and parse a collection of data,
 # including the creation date from the camera, the time zone currently set,
 # and the active status of the GPS device in the camera while shooting.
 def get_exif_bits_from_file(file_pathname):
 	exif_out = subprocess.check_output(
 		exiftool + " -a -s -j " +
-			"-GPSStatus -TimeZone -ImageSize -SubSecCreateDate " +
+			"-GPSStatus -TimeZone -ImageSize -SubSecCreateDate -Description " +
 			"-Source -SpecialInstructions -OriginalTransmissionReference " +
 			file_pathname, shell=True)
 	exif_parsed = json.loads(exif_out)
@@ -206,6 +242,10 @@ def get_exif_bits_from_file(file_pathname):
 		if 'Active' in exif_json['GPSStatus']:
 			has_gps = True
 
+	has_description = False
+	if 'Description' in exif_json:
+		has_description = True
+
 	file_name = file_pathname.split('/')[-1]
 	file_name_no_ext = ''.join(file_name.split('.')[0:-1])
 
@@ -216,6 +256,7 @@ def get_exif_bits_from_file(file_pathname):
 	results['form_date'] = df + "_" + tf
 
 	results['has_gps'] = has_gps
+	results['has_description'] = has_description
 	results['image_dimensions'] = exif_json['ImageSize'].encode('ascii','ignore')
 
 	results['source'] = source
@@ -664,7 +705,87 @@ def main(argv):
 						exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 	#
-	# Phase 6: Use current stock of GPX data to generate embeddable data for an inline google map
+	# Phase 6: Fetch a list of recent short comments from the Poking Things With Sticks blog
+	#          and embed them in any photos that are a reasonable timestamp match.
+
+	if len(dng_list) < 1:
+		print "Skipping comment embed stage."
+	else:
+		print "Starting comment embed stage."
+		# Filter out DNGs with valid GPS data in their EXIF tags.
+		dngs_without_comments = []
+		for dng_file in dng_list:
+			if not target_file_exif_data[dng_file]['has_description']:
+				dngs_without_comments.append(dng_file)
+		if len(dngs_without_comments) < 1:
+			print "All DNG files have embedded comments.  Skipping comment embed stage."
+		else:
+			print "Found " + str(len(dngs_without_comments)) + " DNG files without comments."
+			comments_to_consider = get_recent_short_comments()
+			if len(comments_to_consider) < 1:
+				print "No un-paired comments to consider.  Skipping comment embed stage."
+			else:
+				print "Found " + str(len(comments_to_consider)) + " comments to consider."
+
+				comments_by_id = {}
+				for c in comments_to_consider:
+					comments_by_id[c['id']] = c
+
+				# Step 1: Determine which photo is closest in time to each comment
+				# without being after, and note the interval.
+				# Ignore any gaps larger than 20 minutes.
+				time_scores = {}
+				for c in comments_to_consider:
+					smallest_interval = {}
+					for dng_file in dngs_without_comments:
+						exif_bits = target_file_exif_data[dng_file]
+						comment_delta = c['composition_time_parsed'] - exif_bits['date_and_time_as_datetime']
+						score = comment_delta.total_seconds()
+						if score > 0 and score < 1200:
+							if 'dng_file' in smallest_interval:
+								if score < smallest_interval['interval']:
+									smallest_interval['dng_file'] = dng_file
+									smallest_interval['interval'] = score
+							else:
+								smallest_interval['dng_file'] = dng_file
+								smallest_interval['interval'] = score
+					time_scores[c['id']] = smallest_interval
+				# Step 2: Find the photos that are closest to multiple comments,
+				# and eliminate all but the closest comment.
+				photo_scores = {}
+				for c in comments_to_consider:
+					current_comment_id = c['id']
+					time_score = time_scores[current_comment_id]
+					if 'dng_file' in time_score:
+						present_dng_file = time_score['dng_file']
+						if present_dng_file in photo_scores:
+							old_comment_id = photo_scores[present_dng_file]
+							if time_score['interval'] < time_scores[old_comment_id]['interval']:
+								photo_scores[present_dng_file] = current_comment_id
+						else:
+							photo_scores[present_dng_file] = current_comment_id
+				# We are left with:
+				# Zero or one comment assigned to each photo,
+				# Zero or one photo assigned to each comment.
+				# Assignments only where the photo is older, but not older than 20 minutes.
+				for dng_file in dngs_without_comments:
+					if dng_file in photo_scores:
+						assigned_comment = comments_by_id[photo_scores[dng_file]]
+						exif_bits = target_file_exif_data[dng_file]
+
+						c = assigned_comment['content']
+						print exif_bits['file_name_no_ext'] + ":  " + c
+						c_formatted = re.sub('"', "'", c)
+
+						exif_embed_args = [
+							'-Description="' + c_formatted + '"',
+							'"' + dng_file + '"'
+						]
+						exif_embed_cmd = exiftool + " " + ' '.join(exif_embed_args)
+						exif_embed_out = subprocess.check_output(exif_embed_cmd, shell=True)
+
+	#
+	# Phase 7: Use current stock of GPX data to generate embeddable data for an inline google map
 	#          and an inline jsChart, broken across gaps in recording larger than six hours
 
 	# The "larger than six hour break" rule is needed because the beginning and ending of each day
