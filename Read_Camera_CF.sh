@@ -34,6 +34,16 @@ api_seekrit = 'CHANGE THIS'
 # to catch comments made just after shooting.
 comment_fetch_url = "https://mile42.net/wp-json/ptws/v1/commentlog/unresolved"
 
+# Garmin-sourced GPX files have a data point every second,
+# regardless of whether the unit moves.
+# GPS files recorded by WikiLoc (and others) remove data points
+# during intervals when the phone is not moving.
+# So, for example, if you stop your bike and stand around taking photos,
+# you will get gaps in the recording just where your photos need a timepoint,
+# which is hilarious.  The large time delta here (15 minutes) helps to
+# account for this somewhat.
+maximum_gps_time_difference_from_photo = timedelta(seconds=900)
+
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
 dngconverter = "/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter"
@@ -294,7 +304,7 @@ def main(argv):
 		sys.exit(2)
 	for opt, arg in opts:
 		if opt == '-h':
-			print '-g or --nosplitongaps to turn off splitting of GPS data at 6-hour gaps'
+			print '-g or --nosplitongaps to turn off splitting of GPS data at 4-hour gaps'
 			sys.exit()
 		if opt in ("-g", "--nosplitongaps"):
 			do_not_split_gpx = True
@@ -747,7 +757,7 @@ def main(argv):
 
 				# To ensure a decent GPS read, we want a
 				# location that has at least two points on either side,
-				# each within 20 seconds of its neighbors.
+				# each within the specified maximum gap size of its neighbors.
 				if i > 1 and i < (len(sorted_gpx_points)-1):
 					found_midpoint = True
 				if not found_midpoint:
@@ -755,12 +765,12 @@ def main(argv):
 				else:
 					photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
 
-					gap = timedelta(seconds=20)
+					gap = maximum_gps_time_difference_from_photo
 					delta_during = sorted_gpx_points[i]['t'] - sorted_gpx_points[i-1]['t']
 					delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
 					delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
 					if delta_during > gap or delta_before > gap or delta_after > gap:
-						print exif_bits['file_name_no_ext'] + ": Falls on a gap larger than 20 seconds."
+						print exif_bits['file_name_no_ext'] + ": Falls on a gap larger than 15 minutes."
 					else:
 
 						# In GPX files, latitude and longitude are supplied as decimal degrees
