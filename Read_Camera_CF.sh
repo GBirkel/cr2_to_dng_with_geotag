@@ -43,6 +43,10 @@ comment_fetch_url = "https://mile42.net/wp-json/ptws/v1/commentlog/unresolved"
 # which is hilarious.  The large time delta here (15 minutes) helps to
 # account for this somewhat.
 maximum_gps_time_difference_from_photo = timedelta(seconds=900)
+# How much time to add to the timestamp of any photo before trying to match it with a GPS timepoint
+# useful for quickly correcting bad time zone settings in a camera.
+#time_offset_for_photo_locations = timedelta(seconds = -3600)
+time_offset_for_photo_locations = timedelta(seconds=0)
 
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
@@ -745,7 +749,7 @@ def main(argv):
 
 			for dng_file in dngs_without_gps:
 				exif_bits = target_file_exif_data[dng_file]
-				photo_dt = exif_bits['date_and_time_as_datetime']
+				photo_dt = exif_bits['date_and_time_as_datetime'] + time_offset_for_photo_locations
 				i = 0
 				found_highpoint = False
 				while i < len(sorted_gpx_points) and not found_highpoint:
