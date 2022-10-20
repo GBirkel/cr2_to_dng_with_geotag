@@ -15,12 +15,14 @@ from datetime import datetime, tzinfo, timedelta
 
 garmin_gps_volume = "/Volumes/GARMIN"
 #garmin_gps_volume = "/Users/gbirkel/Documents/Travel/GPS/Reprocess"
-card_volume = "/Volumes/EOS_DIGITAL"
 
+# Source folders for CR photos.
+local_cr_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"
+local_cr_archive_folder = local_cr_folder + "/processed"
+card_volume = "/Volumes/EOS_DIGITAL"
 card_archive_folder = card_volume + "/archived"
 
-# For DNG files converted from CR files
-#dng_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"
+# Destination for DNG files converted from CR files
 dng_folder = "/Users/gbirkel/Pictures/Lightroom_Auto_Import_Folder"
 
 # For GPX files from the GPS, to use for assigning geotags
@@ -362,118 +364,147 @@ def main(argv):
 	# Phase 2: Import new CR files from camera card device (and convert to DNG)
 	#
 
+	card_files_list = []
+	local_files_list = []
 	# If there is a card path, make sure the archive folder exists on it, and look for CR files.
-	if not os.path.isdir(card_volume):
-		print "Cannot find card volume " + card_volume + " .  Skipping import stage."
-		files_list = []
+	if (not os.path.isdir(card_volume)) and (not os.path.isdir(local_cr_folder)):
+		print "Cannot find card volume " + card_volume + " or local import folder.  Skipping import stage."
 	else:
-		print "Found card path."
-		# Make sure the archive folder on the card exists
-		if not os.path.isdir(card_archive_folder):
-			mkdir_out = subprocess.check_output("mkdir \"" + card_archive_folder + "\"", shell=True)
+		if os.path.isdir(card_volume):
+			print "Found card path."
+			# Make sure the archive folder on the card exists
 			if not os.path.isdir(card_archive_folder):
-				print "Cannot create image archive path " + card_archive_folder + " ."
-				exit()
-			else:
-				print "Created image archive path " + card_archive_folder + " ."
+				mkdir_out = subprocess.check_output("mkdir \"" + card_archive_folder + "\"", shell=True)
+				if not os.path.isdir(card_archive_folder):
+					print "Cannot create image archive path " + card_archive_folder + " ."
+					exit()
+				else:
+					print "Created image archive path " + card_archive_folder + " ."
 
-		# Look for CR files on the card
-		files_list = look_for_files(card_volume + "/DCIM/*/*.CR2") + look_for_files(card_volume + "/DCIM/*/*.CR3")
-		if len(files_list) > 0:
-			print "Found " + str(len(files_list)) + " CR files."
-		else:
-			print "No CR files found on card.  Skipping import stage."
+			# Look for CR files on the card
+			card_files_list = look_for_files(card_volume + "/DCIM/*/*.CR2") + look_for_files(card_volume + "/DCIM/*/*.CR3")
+			if len(card_files_list) > 0:
+				print "Found " + str(len(card_files_list)) + " CR files."
+			else:
+				print "No CR files found on card."
+		if os.path.isdir(local_cr_folder):
+			print "Found local import folder."
+			# Make sure the archive folder exists
+			if not os.path.isdir(local_cr_archive_folder):
+				mkdir_out = subprocess.check_output("mkdir \"" + local_cr_archive_folder + "\"", shell=True)
+				if not os.path.isdir(local_cr_archive_folder):
+					print "Cannot create image archive path " + local_cr_archive_folder + " ."
+					exit()
+				else:
+					print "Created image archive path " + local_cr_archive_folder + " ."
+
+			# Look for CR files in the folder
+			local_files_list = look_for_files(local_cr_folder + "/*.CR2") + look_for_files(local_cr_folder + "/*.CR3")
+			if len(local_files_list) > 0:
+				print "Found " + str(len(local_files_list)) + " CR files."
+			else:
+				print "No CR files found in local import folder."
 
 	# Save any target file EXIF data we read for later so we don't need to read it twice.
 	target_file_exif_data = {}
 
-	if len(files_list) > 0:
+	file_collections_to_process = [[card_files_list, True], [local_files_list, False]]
+	for collection in file_collections_to_process:
+		files_list = collection[0]
+		from_card = collection[1]
 
-		all_exif_data = {}
-		already_processed = []
-		newly_processed = []
+		if len(files_list) > 0:
 
-		for original in files_list:
+			all_exif_data = {}
+			already_processed = []
+			newly_processed = []
 
-			exif_bits = get_exif_bits_from_file(original)
+			for original in files_list:
 
-			target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
+				exif_bits = get_exif_bits_from_file(original)
 
-			exif_bits['target_file_name'] = target_file
-			exif_bits['target_file_pathname'] = os.path.join(dng_folder, target_file)
-			exif_bits['gps_added'] = False
+				target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
 
-			# If the target file exists AND the datestamp in the EXIF matches exactly,
-			# consider this file already processed.
-			exif_bits['target_exif'] = {}
-			if not os.path.exists(exif_bits['target_file_pathname']):
-				exif_bits['target_exists'] = False
-				exif_bits['already_converted'] = False
-			else:
-				texif_bits = get_exif_bits_from_file(exif_bits['target_file_pathname'])
-				exif_bits['target_exists'] = True
-				exif_bits['target_exif'] = texif_bits
-				exif_bits['already_converted'] = exif_bits['target_exif']['form_date'] == exif_bits['form_date']
-				# Save this for later so we don't have to read it twice
-				target_file_exif_data[exif_bits['target_file_pathname']] = texif_bits
+				exif_bits['target_file_name'] = target_file
+				exif_bits['target_file_pathname'] = os.path.join(dng_folder, target_file)
+				exif_bits['gps_added'] = False
 
-			if exif_bits['has_gps']:
-				has_gps_str = "   Has GPS "
-			else:
-				has_gps_str = "           "
-			if exif_bits['already_converted']:
-				already_conv_str = "   Already Processed "
-			else:
-				already_conv_str = "                     "
+				# If the target file exists AND the datestamp in the EXIF matches exactly,
+				# consider this file already processed.
+				exif_bits['target_exif'] = {}
+				if not os.path.exists(exif_bits['target_file_pathname']):
+					exif_bits['target_exists'] = False
+					exif_bits['already_converted'] = False
+				else:
+					texif_bits = get_exif_bits_from_file(exif_bits['target_file_pathname'])
+					exif_bits['target_exists'] = True
+					exif_bits['target_exif'] = texif_bits
+					exif_bits['already_converted'] = exif_bits['target_exif']['form_date'] == exif_bits['form_date']
+					# Save this for later so we don't have to read it twice
+					target_file_exif_data[exif_bits['target_file_pathname']] = texif_bits
 
-			print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str + already_conv_str
+				if exif_bits['has_gps']:
+					has_gps_str = "   Has GPS "
+				else:
+					has_gps_str = "           "
+				if exif_bits['already_converted']:
+					already_conv_str = "   Already Processed "
+				else:
+					already_conv_str = "                     "
 
-			if exif_bits['already_converted']:
-				already_processed.append(original)
-			else:
-				newly_processed.append(original)
-				# DNG converter command line arguments
-				conv_args = [
-					'-c',		# Lossless compression
-					'-p1',		# Medium preview
-					'-fl',		# Fast-load data
-					'-cr7.1',	# Camera Raw v7.1 and up compatible (works with Aperture)
-					'-dng1.4',	# DNG file format 1.4 and up compatible (works with Aperture)
-					'-d',		# Output directory
-					"\"" + dng_folder + "\"",
-					'-o',		# Output file
-					"\"" + exif_bits['target_file_name'] + "\"",
-					"\"" + original + "\""	# Input file is last
-				]
+				print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str + already_conv_str
 
-				# "open" command arguments, for launching the DNG converter.
-				# -j : Launch the app hidden
-				# -n : Open a new instance of the application even if one is already running
-				# -W : Block and wait for the application to exit
-				# -a : Path to application to open
-				# --args : Everything beyond here should be passed to the application
-				conv_command = "open -j -n -W -a \"" + dngconverter + "\" --args " + ' '.join(conv_args)
+				if exif_bits['already_converted']:
+					already_processed.append(original)
+				else:
+					newly_processed.append(original)
+					# DNG converter command line arguments
+					conv_args = [
+						'-c',		# Lossless compression
+						'-p1',		# Medium preview
+						'-fl',		# Fast-load data
+						'-cr7.1',	# Camera Raw v7.1 and up compatible (works with Aperture)
+						'-dng1.4',	# DNG file format 1.4 and up compatible (works with Aperture)
+						'-d',		# Output directory
+						"\"" + dng_folder + "\"",
+						'-o',		# Output file
+						"\"" + exif_bits['target_file_name'] + "\"",
+						"\"" + original + "\""	# Input file is last
+					]
 
-				dng_conv_output = subprocess.check_output(conv_command, shell=True)
+					# "open" command arguments, for launching the DNG converter.
+					# -j : Launch the app hidden
+					# -n : Open a new instance of the application even if one is already running
+					# -W : Block and wait for the application to exit
+					# -a : Path to application to open
+					# --args : Everything beyond here should be passed to the application
+					conv_command = "open -j -n -W -a \"" + dngconverter + "\" --args " + ' '.join(conv_args)
 
-				# Now there's a target file with the same EXIF data as the original,
-				# So we save the EXIF data we pulled from the original under a reference to the target.
-				target_file_exif_data[exif_bits['target_file_pathname']] = exif_bits
+					dng_conv_output = subprocess.check_output(conv_command, shell=True)
 
-				archive_path = os.path.join(card_archive_folder, exif_bits['date_as_str'])
-				if not os.path.isdir(archive_path):
-					os.makedirs(archive_path)
+					# Now there's a target file with the same EXIF data as the original,
+					# So we save the EXIF data we pulled from the original under a reference to the target.
+					target_file_exif_data[exif_bits['target_file_pathname']] = exif_bits
 
-				archive_pathname = os.path.join(archive_path, exif_bits['file_name'])
-				print 'moving "' + original + '" to "' + archive_pathname + '"'
-				shutil.move(original, archive_pathname)
+					if from_card:
+						archive_path = os.path.join(card_archive_folder, exif_bits['date_as_str'])
+						if not os.path.isdir(archive_path):
+							os.makedirs(archive_path)
+					else:
+						archive_path = os.path.join(local_cr_archive_folder, exif_bits['date_as_str'])
+						if not os.path.isdir(archive_path):
+							os.makedirs(archive_path)
 
-			all_exif_data[original] = exif_bits
+					archive_pathname = os.path.join(archive_path, exif_bits['file_name'])
+					print 'moving "' + original + '" to "' + archive_pathname + '"'
+					shutil.move(original, archive_pathname)
 
-		print "Already verified processed: " + str(len(already_processed))
-		print "Newly Processed: " + str(len(newly_processed))
-		to_move = already_processed + newly_processed
-		print "Moved to archive folder: " + str(len(to_move))
+				all_exif_data[original] = exif_bits
+
+			print "Already verified processed: " + str(len(already_processed))
+			print "Newly Processed: " + str(len(newly_processed))
+			to_move = already_processed + newly_processed
+			print "Moved to archive folder: " + str(len(to_move))
 
 	#
 	# Phase 2-b: Locate pre-existing DNG / HEIC files and read their EXIF tags as well
