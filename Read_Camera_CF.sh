@@ -49,6 +49,9 @@ maximum_gps_time_difference_from_photo = timedelta(seconds=900)
 # useful for quickly correcting bad time zone settings in a camera.
 #time_offset_for_photo_locations = timedelta(seconds = -3600)
 time_offset_for_photo_locations = timedelta(seconds=0)
+# How much altitude to add (in meters) to any calculated GPS location of a photo before embedding
+altitude_offset_for_photo_locations = 0.0
+
 
 exiftool = "/usr/local/bin/exiftool"
 gpsbabel = "/usr/local/bin/gpsbabel"
@@ -201,15 +204,23 @@ def get_exif_bits_from_file(file_pathname):
 	d, t = date_and_time_tag.split(" ")
 	df = re.sub(':', '-', d)
 	tf = re.sub('[:\.]', '-', t)
-
-	# Sometimes the fractions of a second has two decimal places (Canon), sometimes three (iPhone).
+	# Sometimes the fractions of a second has two decimal places (Canon), sometimes three (iPhone),
+	# and sometimes it's entirely missing (Lightroom).
+	found_fractions_of_second = True
 	time_parts = re.match('^([0-9]{2,4}\:[0-9]{2}\:[0-9]{2} [0-9]{2}\:[0-9]{2}\:[0-9]{2}\.[0-9]+)(.*)$', date_and_time_tag)
+	if time_parts is None:
+		# Catch the 'entirely missing' case
+		found_fractions_of_second = False
+		time_parts = re.match('^([0-9]{2,4}\:[0-9]{2}\:[0-9]{2} [0-9]{2}\:[0-9]{2}\:[0-9]{2})(.*)$', date_and_time_tag)
 	date_and_time_without_tz = time_parts.group(1)
 	possible_tz = time_parts.group(2)
 	# Parse the non-time-zone portion of the date string.
 	# This is the easy part.
 	# Most of the rest of this function is for taking the time zone into account.
-	date_and_time_as_datetime = datetime.strptime(date_and_time_without_tz, "%Y:%m:%d %H:%M:%S.%f")
+	if found_fractions_of_second:
+		date_and_time_as_datetime = datetime.strptime(date_and_time_without_tz, "%Y:%m:%d %H:%M:%S.%f")
+	else:
+		date_and_time_as_datetime = datetime.strptime(date_and_time_without_tz, "%Y:%m:%d %H:%M:%S")
 
 	# Time zone parsing.  This is where the difference in Canon firmware as mentioned in the README comes into play.
 
@@ -303,17 +314,21 @@ def get_exif_bits_from_file(file_pathname):
 
 def main(argv):
 	do_not_split_gpx = False
+	replace_gps = False
 	try:
-		opts, args = getopt.getopt(argv,"hg",["nosplitongaps"])
+		opts, args = getopt.getopt(argv,"hgr",["nosplitongaps", "replacegps"])
 	except getopt.GetoptError:
 		print 'Read_Camera_CF.sh -h for invocation help'
 		sys.exit(2)
 	for opt, arg in opts:
 		if opt == '-h':
 			print '-g or --nosplitongaps to turn off splitting of GPS data at 4-hour gaps'
+			print '-r or --replacegps to overwrite existing GPS data where new data is found'
 			sys.exit()
 		if opt in ("-g", "--nosplitongaps"):
 			do_not_split_gpx = True
+		if opt in ("-r", "--replacegps"):
+			replace_gps = True
 
 	if check_all_paths() == False:
 		sys.exit()
@@ -770,13 +785,19 @@ def main(argv):
 		print "Starting geotag stage."
 		# Filter out DNGs with valid GPS data in their EXIF tags.
 		dngs_without_gps = []
-		for dng_file in dng_list:
-			if not target_file_exif_data[dng_file]['has_gps']:
-				dngs_without_gps.append(dng_file)
+		if replace_gps:
+			dngs_without_gps = dng_list
+		else:
+			for dng_file in dng_list:
+				if not target_file_exif_data[dng_file]['has_gps']:
+					dngs_without_gps.append(dng_file)
 		if len(dngs_without_gps) < 1:
 			print "All DNG files have GPS tags.  Skipping geotag stage."
 		else:
-			print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
+			if replace_gps:
+				print "Seeking GPS data for " + str(len(dngs_without_gps)) + " DNG files.  May overwrite existing GPS data."
+			else:
+				print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
 
 			for dng_file in dngs_without_gps:
 				exif_bits = target_file_exif_data[dng_file]
@@ -831,6 +852,8 @@ def main(argv):
 							lat_calc = lat_start + (frac * lat_delta)
 							lon_calc = lon_start + (frac * lon_delta)
 							el_calc = el_start + (frac * el_delta)
+						
+						el_calc += altitude_offset_for_photo_locations
 
 						# When supplying this data to the EXIF tool we will have to take the absolute
 						# value, and provide a "reference" for whether that value is forward or backward:
@@ -850,7 +873,7 @@ def main(argv):
 							el_ref = "Below Sea Level"
 
 						print exif_bits['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
-								str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + " " + el_ref
+								str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + "m " + el_ref
 
 						exif_gps_embed_args = [
 							'-GPSLatitude="' + str(abs(lat_calc)) + '"',
