@@ -2,7 +2,7 @@
 
 This is a Python script that does the following:
 
-* Import Canon Raw image files (CR2 files) from a media card and convert them to DNG along the way.
+* Import Canon Raw image files (CR2 / CR3 files) from a media card and convert them to DNG along the way.
 * Pull track data from a Garmin Edg 500 or similar device, converting it to GPX along the way.
 * Use the GPX data to geotag the DNG files, taking time zone into account.
 * If there is geolocation data already in the DNG from the camera, leave it as-is.
