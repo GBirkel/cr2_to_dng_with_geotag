@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<config>
+
+    <exiftool>/usr/local/bin/exiftool</exiftool>
+    <gpsbabel>/Applications/GPSBabelFE.app/Contents/MacOS/gpsbabel</gpsbabel>
+    <dngconverter>/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter</dngconverter>
+
+    <garmin_gps_volume>/Volumes/GARMIN</garmin_gps_volume>
+    <!-- <garmin_gps_volume>/Users/johndoe/Documents/Travel/GPS/Reprocess</garmin_gps_volume> -->
+
+    <!-- Source folders for raw photos --> 
+    <local_cr_folder>/Users/johndoe/Pictures/DNG_RAW_In</local_cr_folder>
+    <card_volume>/Volumes/EOS_DIGITAL</card_volume>
+
+    <!-- Destination for DNG files converted from raw photos --> 
+    <dng_folder>/Users/johndoe/Pictures/Lightroom_Auto_Import_Folder</dng_folder>
+
+    <!-- For GPX files from the GPS, to use for assigning geotags --> 
+    <gps_files_folder>/Users/johndoe/Documents/Travel/GPS</gps_files_folder>
+    <!-- For generating map+graph pages --> 
+    <chart_output_folder>/Users/johndoe/Documents/Travel/GPS</chart_output_folder>
+
+    <prepend_datestamp_to_photo_files>True</prepend_datestamp_to_photo_files>
+
+    <!-- Garmin-sourced GPX files have a data point every second,
+         regardless of whether the unit moves.
+    GPS files recorded by WikiLoc (and others) remove data points
+    during intervals when the phone is not moving.
+    So, for example, if you stop your bike and stand around taking photos,
+    you will get gaps in the recording just where your photos need a timepoint,
+    which is hilarious.  The large time delta here (900 seconds = 15 minutes)
+    helps to account for this somewhat. -->
+    <maximum_gps_time_difference_from_photo>900</maximum_gps_time_difference_from_photo>
+
+    <!-- How much time to add to the timestamp of any photo before trying to match
+         it with a GPS timepoint.  Useful for quickly correcting bad time zone settings
+    from the camera.  A good alternate value: -3600 -->
+    <time_offset_for_photo_locations>0</time_offset_for_photo_locations>
+
+    <!-- How much altitude to add (in meters) to any calculated GPS location
+         of a photo before embedding -->
+    <altitude_offset_for_photo_locations>0.0</altitude_offset_for_photo_locations>
+
+    <!-- Note that your camera's time must be set accurately, within a few seconds,
+         to catch comments made just after shooting. --> 
+    <!-- API to fetch short text comments for embedding in photos --> 
+    <comment_fetch_url>https://.../wp-json/ptws/v1/commentlog/unresolved</comment_fetch_url>
+    <!-- API to upload GPS recordings --> 
+    <route_upload_url>https://.../wp-json/ptws/v1/route/create</route_upload_url>
+    <api_seekrit>...</api_seekrit>
+
+    <!-- Exported photos to be uploaded to Flickr go here --> 
+    <flickr_sync_folder>/Users/johndoe/Pictures/Flickr_Sync_Folder</flickr_sync_folder>
+
+    <!-- Name of Flickr album to automatically add uploaded photos to -->
+    <flickr_album_to_add_to>John Doe's Photo Album</flickr_album_to_add_to>
+
+    <flickr_account_email>johndoe@gmail.com</flickr_account_email>
+    <!-- If you don't already have these, then (at least as a "pro")
+         you will have the opportunity to create them together.
+         Log in, then go to www.flickr.com/account/sharing , API Keys.  -->
+    <flickr_api_key>...</flickr_api_key>
+    <flickr_api_secret>...</flickr_api_secret>
+
+</config>

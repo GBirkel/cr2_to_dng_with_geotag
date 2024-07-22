@@ -1,167 +1,52 @@
-#!/usr/local/bin/python
+#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3
 
 import os, sys, re
 import getopt
+import codecs
 import shutil
 import subprocess
 import gpxpy
 import json
 import hashlib
+from common_utils import *
 from datetime import datetime, tzinfo, timedelta
 
 #
-# Customize before using:
+# Customize config.xml before using!
 #
 
-garmin_gps_volume = "/Volumes/GARMIN"
-#garmin_gps_volume = "/Users/gbirkel/Documents/Travel/GPS/Reprocess"
 
-# Source folders for CR photos.
-local_cr_folder = "/Users/gbirkel/Pictures/DNG_RAW_In"
-local_cr_archive_folder = local_cr_folder + "/processed"
-card_volume = "/Volumes/EOS_DIGITAL"
-card_archive_folder = card_volume + "/archived"
-
-# Destination for DNG files converted from CR files
-dng_folder = "/Users/gbirkel/Pictures/Lightroom_Auto_Import_Folder"
-
-# For GPX files from the GPS, to use for assigning geotags
-gps_files_folder = "/Users/gbirkel/Documents/Travel/GPS"
-# For generating map+graph pages
-chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"
-
-# API to fetch short text comments for embedding in photos
-api_seekrit = 'CHANGE THIS'
-# Note that your camera's time must be set accurately, within a few seconds,
-# to catch comments made just after shooting.
-comment_fetch_url = "https://mile42.net/wp-json/ptws/v1/commentlog/unresolved"
-
-# Garmin-sourced GPX files have a data point every second,
-# regardless of whether the unit moves.
-# GPS files recorded by WikiLoc (and others) remove data points
-# during intervals when the phone is not moving.
-# So, for example, if you stop your bike and stand around taking photos,
-# you will get gaps in the recording just where your photos need a timepoint,
-# which is hilarious.  The large time delta here (15 minutes) helps to
-# account for this somewhat.
-maximum_gps_time_difference_from_photo = timedelta(seconds=900)
-# How much time to add to the timestamp of any photo before trying to match it with a GPS timepoint
-# useful for quickly correcting bad time zone settings in a camera.
-#time_offset_for_photo_locations = timedelta(seconds = -3600)
-time_offset_for_photo_locations = timedelta(seconds=0)
-# How much altitude to add (in meters) to any calculated GPS location of a photo before embedding
-altitude_offset_for_photo_locations = 0.0
-
-
-exiftool = "/usr/local/bin/exiftool"
-gpsbabel = "/usr/local/bin/gpsbabel"
-dngconverter = "/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter"
-
-
-def check_all_paths():
-	if not os.path.exists(dngconverter):
-		print "Install the Adobe DNG converter, please."
+def check_all_paths(config):
+	if not os.path.exists(config['dngconverter']):
+		print("Install the Adobe DNG converter, please.")
 		return False
-	if not os.path.exists(exiftool):
-		print "Install exiftool with \"brew install exiftool\", please."
+	if not os.path.exists(config['exiftool']):
+		print("Install exiftool with \"brew install exiftool\", please.")
 		return False
-	if not os.path.exists(gpsbabel):
-		print "Install gpsbabel with \"brew install gpsbabel\", please."
+	if not os.path.exists(config['gpsbabel']):
+		print("Install gpsbabel with \"brew install gpsbabel\", please.")
 		return False
-	if not os.path.isdir(gps_files_folder):
-		print "Cannot find gps_files_folder at: " + gps_files_folder + " ."
+	if not os.path.isdir(config['gps_files_folder']):
+		print("Cannot find gps_files_folder at: " + config['gps_files_folder'] + " .")
 		return False
-	if not os.path.isdir(chart_output_folder):
-		print "Cannot find chart_output_folder folder at: " + chart_output_folder + " ."
+	if not os.path.isdir(config['chart_output_folder']):
+		print("Cannot find chart_output_folder folder at: " + config['chart_output_folder'] + " .")
 		return False
-	if not os.path.isdir(dng_folder):
-		print "Cannot find dng_folder folder at: " + dng_folder + " ."
+	if not os.path.isdir(config['dng_folder']):
+		print("Cannot find dng_folder folder at: " + config['dng_folder'] + " .")
 		return False
 	return True
 
 
-# Support function to look for files on a given path
-def look_for_files(p):
-	try:
-		ls_out = subprocess.check_output("ls " + p, shell=True)
-		files_list = ls_out.split("\n")
-		files_list = [f for f in files_list if len(f) > 4]
-	except subprocess.CalledProcessError:
-		files_list = []
-	return files_list
-
-
-# Subclass of tzinfo swiped mostly from dateutil
-class fancytzoffset(tzinfo):
-    def __init__(self, name, offset):
-        self._name = name
-        self._offset = timedelta(seconds=offset)
-    def utcoffset(self, dt):
-        return self._offset
-    def dst(self, dt):
-        return timedelta(0)
-    def tzname(self, dt):
-        return self._name
-    def __eq__(self, other):
-        return (isinstance(other, fancytzoffset) and self._offset == other._offset)
-    def __ne__(self, other):
-        return not self.__eq__(other)
-    def __repr__(self):
-        return "%s(%s, %s)" % (self.__class__.__name__,
-                               repr(self._name),
-                               self._offset.days*86400+self._offset.seconds)
-    __reduce__ = object.__reduce__
-
-
-# Variant tzinfo subclass for UTC pulled from GPX logs
-class fancytzutc(tzinfo):
-    def utcoffset(self, dt):
-        return timedelta(0)
-    def dst(self, dt):
-        return timedelta(0)
-    def tzname(self, dt):
-        return "UTC"
-    def __eq__(self, other):
-        return (isinstance(other, fancytzutc) or
-                (isinstance(other, fancytzoffset) and other._offset == timedelta(0)))
-    def __ne__(self, other):
-        return not self.__eq__(other)
-    def __repr__(self):
-        return "%s()" % self.__class__.__name__
-    __reduce__ = object.__reduce__
-
-
-# Support function to pretty-print dates that datetime can't handle
-def pretty_datetime(t):
-	# Code loosely adapted from Perl's HTTP-Date
-	MoY = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-	mon = t.month - 1
-	date_str = '%04d-%s-%02d' % (t.year, MoY[mon], t.day)
-	hour = t.hour
-	half_day = 'am'
-	if hour > 11:
-		half_day = 'pm'
-	if hour > 12:
-		hour = hour - 12
-	elif hour == 0:
-		hour = 12
-	u = t.tzname()
-	u_str = ''
-	if u is not None:
-		u_str = ' ' + u
-	time_str = '%02d:%02d%s' % (hour, t.minute, half_day)
-
-	return date_str + ' ' + time_str + u_str
-
-
 # Support function to fetch a set of recent short comments from a database
-def get_recent_short_comments():
-	curl_command = 'curl -F key=\"' + api_seekrit + '\" ' + comment_fetch_url
-	fetch_out = '[]'
+def get_recent_short_comments(config):
+	curl_command = 'curl -F key=\"' + config['api_seekrit'] + '\" ' + config['comment_fetch_url']
+	fetch_out_str = '[]'
 	try:
 		fetch_out = subprocess.check_output(curl_command, shell=True)
+		fetch_out_str = codecs.utf_8_decode(fetch_out)[0]
 	except subprocess.CalledProcessError:
-		print "Error fetching recent comments!"
+		print("Error fetching recent comments!")
 
 	exif_parsed = json.loads(fetch_out)
 	all_comments = []
@@ -169,7 +54,7 @@ def get_recent_short_comments():
 	for comment in exif_parsed:
 		p = {}
 
-		c = comment['composition_time'].encode('ascii','ignore')
+		c = comment['composition_time']
 		c_parsed = datetime.strptime(c, "%Y-%m-%d %H:%M:%S")
 		# Assuming GMT.
 		tz_offset_tzinfo = fancytzoffset('+00:00', 0)
@@ -186,175 +71,61 @@ def get_recent_short_comments():
 	return all_comments
 
 
-# Support function to invoke exiftool and pull out and parse a collection of data,
-# including the creation date from the camera, the time zone currently set,
-# and the active status of the GPS device in the camera while shooting.
-def get_exif_bits_from_file(file_pathname):
-	exif_out = subprocess.check_output(
-		exiftool + " -a -s -j " +
-			"-GPSStatus -GPSPosition -TimeZone -OffsetTime -ImageSize -SubSecCreateDate -Description " +
-			"-Source -SpecialInstructions -OriginalTransmissionReference " +
-			file_pathname, shell=True)
-	exif_parsed = json.loads(exif_out)
-	exif_json = exif_parsed[0]
-	results = {}
-
-	date_and_time_tag = exif_json['SubSecCreateDate'].encode('ascii','ignore')
-
-	d, t = date_and_time_tag.split(" ")
-	df = re.sub(':', '-', d)
-	tf = re.sub('[:\.]', '-', t)
-	# Sometimes the fractions of a second has two decimal places (Canon), sometimes three (iPhone),
-	# and sometimes it's entirely missing (Lightroom).
-	found_fractions_of_second = True
-	time_parts = re.match('^([0-9]{2,4}\:[0-9]{2}\:[0-9]{2} [0-9]{2}\:[0-9]{2}\:[0-9]{2}\.[0-9]+)(.*)$', date_and_time_tag)
-	if time_parts is None:
-		# Catch the 'entirely missing' case
-		found_fractions_of_second = False
-		time_parts = re.match('^([0-9]{2,4}\:[0-9]{2}\:[0-9]{2} [0-9]{2}\:[0-9]{2}\:[0-9]{2})(.*)$', date_and_time_tag)
-	date_and_time_without_tz = time_parts.group(1)
-	possible_tz = time_parts.group(2)
-	# Parse the non-time-zone portion of the date string.
-	# This is the easy part.
-	# Most of the rest of this function is for taking the time zone into account.
-	if found_fractions_of_second:
-		date_and_time_as_datetime = datetime.strptime(date_and_time_without_tz, "%Y:%m:%d %H:%M:%S.%f")
-	else:
-		date_and_time_as_datetime = datetime.strptime(date_and_time_without_tz, "%Y:%m:%d %H:%M:%S")
-
-	# Time zone parsing.  This is where the difference in Canon firmware as mentioned in the README comes into play.
-
-	# We will key off the length of the SubSecCreateDate tag to determine what to do.
-	if len(possible_tz) > 2:
-		# Seems to have time zone info.  Isolate it so it works with our parser. 
-		tz_to_parse = possible_tz
-		found_tz = True
-	elif 'TimeZone' in exif_json:
-		# Not long enough to have time zone info.  Use the TimeZone tag.
-		tz_to_parse = exif_json['TimeZone'].encode('ascii','ignore')
-		found_tz = True
-	elif 'OffsetTime' in exif_json:
-		# Not long enough to have time zone info.  Use the OffsetTime tag.
-		tz_to_parse = exif_json['OffsetTime'].encode('ascii','ignore')
-		found_tz = True
-	else:
-		tz_to_parse = None
-		found_tz = False
-
-	tz_as_offset = 0
-	if tz_to_parse:
-		# Parse the time zone offset string into an offset in seconds
-		# (Code adapted from dateutil.)
-		tz_to_parse = tz_to_parse.strip()
-		if tz_to_parse == 'Z':
-			tz_to_parse = "+00:00"	# Manually translate UTC shorthand of Z into a time delta
-		tz_without_modifier = tz_to_parse
-		if tz_to_parse[0] in ('+', '-'):
-			signal = (-1, +1)[tz_to_parse[0] == '+']
-			tz_without_modifier = tz_to_parse[1:]
-		else:
-			signal = +1
-		tz_without_modifier = re.sub(':', '', tz_without_modifier)
-		if len(tz_without_modifier) == 4:
-			tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:])*60) * signal
-		elif len(tz_without_modifier) == 6:
-			tz_as_offset = (int(tz_without_modifier[:2])*3600 + int(tz_without_modifier[2:4])*60 + int(tz_without_modifier[4:])) * signal
-
-	# Create an object of a tzinfo-derived class to hold the time zone info,
-	# as required by datetime.
-	tz_offset_tzinfo = fancytzoffset(tz_to_parse, tz_as_offset)
-
-	# Replace the time zone info object with our own
-	date_and_time_as_datetime = date_and_time_as_datetime.replace(tzinfo=tz_offset_tzinfo)
-
-	source = None
-	if 'Source' in exif_json:
-		source = exif_json['Source']
-	specinstructions = None
-	if 'SpecialInstructions' in exif_json:
-		specinstructions = exif_json['SpecialInstructions']
-	transmissionref = None
-	if 'OriginalTransmissionReference' in exif_json:
-		transmissionref = exif_json['OriginalTransmissionReference']
-
-	has_gps = False
-	if 'GPSStatus' in exif_json:
-		if 'Active' in exif_json['GPSStatus']:
-			has_gps = True
-	elif 'GPSPosition' in exif_json:
-		if ',' in exif_json['GPSPosition']:
-			has_gps = True
-
-	has_description = False
-	if 'Description' in exif_json:
-		has_description = True
-
-	file_name = file_pathname.split('/')[-1]
-	file_name_no_ext = ''.join(file_name.split('.')[0:-1])
-
-	results['found_time_zone'] = found_tz
-	results['date_as_str'] = df
-	results['date_and_time'] = df + " " + t
-	results['date_and_time_as_datetime'] = date_and_time_as_datetime
-	results['form_date'] = df + "_" + tf
-
-	results['has_gps'] = has_gps
-	results['has_description'] = has_description
-	results['image_dimensions'] = exif_json['ImageSize'].encode('ascii','ignore')
-
-	results['source'] = source
-	results['special_instructions'] = specinstructions
-	results['transmission_reference'] = transmissionref
-
-	results['file_name'] = file_name
-	results['file_name_no_ext'] = file_name_no_ext
-
-	return results
-
-
 def main(argv):
 	do_not_split_gpx = False
 	replace_gps = False
 	try:
 		opts, args = getopt.getopt(argv,"hgr",["nosplitongaps", "replacegps"])
 	except getopt.GetoptError:
-		print 'Read_Camera_CF.sh -h for invocation help'
+		print('Read_Camera_CF.sh -h for invocation help')
 		sys.exit(2)
 	for opt, arg in opts:
 		if opt == '-h':
-			print '-g or --nosplitongaps to turn off splitting of GPS data at 4-hour gaps'
-			print '-r or --replacegps to overwrite existing GPS data where new data is found'
+			print('-g or --nosplitongaps to turn off splitting of GPS data at 4-hour gaps')
+			print('-r or --replacegps to overwrite existing GPS data where new data is found')
 			sys.exit()
 		if opt in ("-g", "--nosplitongaps"):
 			do_not_split_gpx = True
 		if opt in ("-r", "--replacegps"):
 			replace_gps = True
 
-	if check_all_paths() == False:
+	config = read_config()
+	if config is None:
+		print('Error reading your config.xml file!')
+		sys.exit(2)
+
+	local_cr_archive_folder = config['local_cr_folder'] + "/processed"
+	card_archive_folder = config['card_volume'] + "/archived"
+
+	time_offset_for_photo_locations = timedelta(seconds=int(config['time_offset_for_photo_locations']))
+	altitude_offset_for_photo_locations = float(config['altitude_offset_for_photo_locations'])
+
+
+	if check_all_paths(config) == False:
 		sys.exit()
 
 	#
 	# Phase 1: Import new FIT files from GPS device (and convert to GPX)
 	#
 
-	if os.path.exists(garmin_gps_volume):
-		print "Found GPS path."
-		e = look_for_files(garmin_gps_volume + "/Garmin/Activities/*.fit")	# Edge 500,530
-		f = look_for_files(garmin_gps_volume + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
-		g = look_for_files(garmin_gps_volume + "/Garmin/Activity/*.fit")	# Edge 130+
+	if os.path.exists(config['garmin_gps_volume']):
+		print("Found GPS path.")
+		e = look_for_files(config['garmin_gps_volume'] + "/Garmin/Activities/*.fit")	# Edge 500,530
+		f = look_for_files(config['garmin_gps_volume'] + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
+		g = look_for_files(config['garmin_gps_volume'] + "/Garmin/Activity/*.fit")	# Edge 130+
 		fit_files = e + f + g
 		if len(fit_files) > 0:
 			# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
 			# causing them to be re-imported.
-			archive_path = os.path.join(gps_files_folder, 'Processed')
+			archive_path = os.path.join(config['gps_files_folder'], 'Processed')
 			if not os.path.isdir(archive_path):
 				os.makedirs(archive_path)
 
 			for fit_file in fit_files:
 				base_name = fit_file.split('/')[-1]
 				base_name_no_ext = ''.join(base_name.split('.')[0:-1])
-				print fit_file
-				path_to_gpx = os.path.join(gps_files_folder, base_name_no_ext + '.gpx')
+				print(fit_file)
+				path_to_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '.gpx')
 				gpsbabel_args = [
 					'-i garmin_fit',		# Input format
 					'-f',					# Input file
@@ -373,7 +144,7 @@ def main(argv):
 				# So we use copyfile instead, which does not attempt to set equivalent permissions, then remove the source file afterwards.
 				shutil.copyfile(fit_file, os.path.join(archive_path, base_name))
 				os.remove(fit_file)
-			print "Converted " + str(len(fit_files)) + " FIT files to GPX."
+			print("Converted " + str(len(fit_files)) + " FIT files to GPX.")
 
 	#
 	# Phase 2: Import new CR files from camera card device (and convert to DNG)
@@ -382,43 +153,43 @@ def main(argv):
 	card_files_list = []
 	local_files_list = []
 	# If there is a card path, make sure the archive folder exists on it, and look for CR files.
-	if (not os.path.isdir(card_volume)) and (not os.path.isdir(local_cr_folder)):
-		print "Cannot find card volume " + card_volume + " or local import folder.  Skipping import stage."
+	if (not os.path.isdir(config['card_volume'])) and (not os.path.isdir(config['local_cr_folder'])):
+		print("Cannot find card volume " + config['card_volume'] + " or local import folder.  Skipping import stage.")
 	else:
-		if os.path.isdir(card_volume):
-			print "Found card path."
+		if os.path.isdir(config['card_volume']):
+			print("Found card path.")
 			# Make sure the archive folder on the card exists
 			if not os.path.isdir(card_archive_folder):
 				mkdir_out = subprocess.check_output("mkdir \"" + card_archive_folder + "\"", shell=True)
 				if not os.path.isdir(card_archive_folder):
-					print "Cannot create image archive path " + card_archive_folder + " ."
+					print("Cannot create image archive path " + card_archive_folder + " .")
 					exit()
 				else:
-					print "Created image archive path " + card_archive_folder + " ."
+					print("Created image archive path " + card_archive_folder + " .")
 
 			# Look for CR files on the card
-			card_files_list = look_for_files(card_volume + "/DCIM/*/*.CR2") + look_for_files(card_volume + "/DCIM/*/*.CR3")
+			card_files_list = look_for_files(config['card_volume'] + "/DCIM/*/*.CR2") + look_for_files(config['card_volume'] + "/DCIM/*/*.CR3")
 			if len(card_files_list) > 0:
-				print "Found " + str(len(card_files_list)) + " CR files."
+				print("Found " + str(len(card_files_list)) + " CR files.")
 			else:
-				print "No CR files found on card."
-		if os.path.isdir(local_cr_folder):
-			print "Found local import folder."
+				print("No CR files found on card.")
+		if os.path.isdir(config['local_cr_folder']):
+			print("Found local import folder.")
 			# Make sure the archive folder exists
 			if not os.path.isdir(local_cr_archive_folder):
 				mkdir_out = subprocess.check_output("mkdir \"" + local_cr_archive_folder + "\"", shell=True)
 				if not os.path.isdir(local_cr_archive_folder):
-					print "Cannot create image archive path " + local_cr_archive_folder + " ."
+					print("Cannot create image archive path " + local_cr_archive_folder + " .")
 					exit()
 				else:
-					print "Created image archive path " + local_cr_archive_folder + " ."
+					print("Created image archive path " + local_cr_archive_folder + " .")
 
 			# Look for CR files in the folder
-			local_files_list = look_for_files(local_cr_folder + "/*.CR2") + look_for_files(local_cr_folder + "/*.CR3")
+			local_files_list = look_for_files(config['local_cr_folder'] + "/*.CR2") + look_for_files(config['local_cr_folder'] + "/*.CR3")
 			if len(local_files_list) > 0:
-				print "Found " + str(len(local_files_list)) + " CR files."
+				print("Found " + str(len(local_files_list)) + " CR files.")
 			else:
-				print "No CR files found in local import folder."
+				print("No CR files found in local import folder.")
 
 	# Save any target file EXIF data we read for later so we don't need to read it twice.
 	target_file_exif_data = {}
@@ -436,12 +207,15 @@ def main(argv):
 
 			for original in files_list:
 
-				exif_bits = get_exif_bits_from_file(original)
+				exif_bits = get_exif_bits_from_file(config['exiftool'], original)
 
-				target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
+				if prepend_datestamp_to_photo_files == 'True':
+					target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
+				else:
+					target_file = exif_bits['file_name_no_ext'] + ".dng"
 
 				exif_bits['target_file_name'] = target_file
-				exif_bits['target_file_pathname'] = os.path.join(dng_folder, target_file)
+				exif_bits['target_file_pathname'] = os.path.join(config['dng_folder'], target_file)
 				exif_bits['gps_added'] = False
 
 				# If the target file exists AND the datestamp in the EXIF matches exactly,
@@ -451,7 +225,7 @@ def main(argv):
 					exif_bits['target_exists'] = False
 					exif_bits['already_converted'] = False
 				else:
-					texif_bits = get_exif_bits_from_file(exif_bits['target_file_pathname'])
+					texif_bits = get_exif_bits_from_file(config['exiftool'], exif_bits['target_file_pathname'])
 					exif_bits['target_exists'] = True
 					exif_bits['target_exif'] = texif_bits
 					exif_bits['already_converted'] = exif_bits['target_exif']['form_date'] == exif_bits['form_date']
@@ -467,7 +241,7 @@ def main(argv):
 				else:
 					already_conv_str = "                     "
 
-				print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str + already_conv_str
+				print(exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str + already_conv_str)
 
 				if exif_bits['already_converted']:
 					already_processed.append(original)
@@ -481,7 +255,7 @@ def main(argv):
 						'-cr7.1',	# Camera Raw v7.1 and up compatible (works with Aperture)
 						'-dng1.4',	# DNG file format 1.4 and up compatible (works with Aperture)
 						'-d',		# Output directory
-						"\"" + dng_folder + "\"",
+						"\"" + config['dng_folder'] + "\"",
 						'-o',		# Output file
 						"\"" + exif_bits['target_file_name'] + "\"",
 						"\"" + original + "\""	# Input file is last
@@ -511,62 +285,62 @@ def main(argv):
 							os.makedirs(archive_path)
 
 					archive_pathname = os.path.join(archive_path, exif_bits['file_name'])
-					print 'moving "' + original + '" to "' + archive_pathname + '"'
+					print('moving "' + original + '" to "' + archive_pathname + '"')
 					shutil.move(original, archive_pathname)
 
 				all_exif_data[original] = exif_bits
 
-			print "Already verified processed: " + str(len(already_processed))
-			print "Newly Processed: " + str(len(newly_processed))
+			print("Already verified processed: " + str(len(already_processed)))
+			print("Newly Processed: " + str(len(newly_processed)))
 			to_move = already_processed + newly_processed
-			print "Moved to archive folder: " + str(len(to_move))
+			print("Moved to archive folder: " + str(len(to_move)))
 
 	#
 	# Phase 2-b: Locate pre-existing DNG / HEIC files and read their EXIF tags as well
 	#
 
-	dng_list = look_for_files(dng_folder + "/*.dng")
+	dng_list = look_for_files(config['dng_folder'] + "/*.dng")
 	if len(dng_list) < 1:
-			print "No DNG files found in target folder."
+			print("No DNG files found in target folder.")
 	else:
-		print "Found " + str(len(dng_list)) + " DNG files."
+		print("Found " + str(len(dng_list)) + " DNG files.")
 
 		# Fetch EXIF data for any DNGs that we haven't already
 		# (That would be all the DNGs that were in the target folder already
 		#  and didn't have filenames matching CRs)
 		additional_exif_fetches = 0
 		for dng_file in dng_list:
-			if not target_file_exif_data.has_key(dng_file):
+			if dng_file not in target_file_exif_data:
 
-				exif_bits = get_exif_bits_from_file(dng_file)
+				exif_bits = get_exif_bits_from_file(config['exiftool'], dng_file)
 				if exif_bits['has_gps']:
 					has_gps_str = "   Has GPS "
 				else:
 					has_gps_str = "           "
-				print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str
+				print(exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str)
 
 				target_file_exif_data[dng_file] = exif_bits
 				additional_exif_fetches = additional_exif_fetches + 1
 		if additional_exif_fetches > 0:
-			print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files."
+			print("Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files.")
 
-	heic_list = look_for_files(dng_folder + "/*.HEIC")
+	heic_list = look_for_files(config['dng_folder'] + "/*.HEIC")
 	if len(heic_list) > 0:
-		print "Found " + str(len(heic_list)) + " HEIC files."
+		print("Found " + str(len(heic_list)) + " HEIC files.")
 
 		additional_exif_fetches = 0
 		for heic_file in heic_list:
-			exif_bits = get_exif_bits_from_file(heic_file)
+			exif_bits = get_exif_bits_from_file(config['exiftool'], heic_file)
 			if exif_bits['has_gps']:
 				has_gps_str = "   Has GPS "
 			else:
 				has_gps_str = "           "
-			print exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str
+			print(exif_bits['file_name_no_ext'] + ":   Date: " + pretty_datetime(exif_bits['date_and_time_as_datetime']) + has_gps_str)
 
 			target_file_exif_data[heic_file] = exif_bits
 			additional_exif_fetches = additional_exif_fetches + 1
 		if additional_exif_fetches > 0:
-			print "Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing HEIC files."
+			print("Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing HEIC files.")
 
 	#
 	# Phase 3: Ensure that a reasonably unique identifier is embedded in all found photos
@@ -574,18 +348,18 @@ def main(argv):
 
 	found_list = dng_list + heic_list
 	if len(found_list) < 1:
-		print "Skipping unique ID stage."
+		print("Skipping unique ID stage.")
 	else:
-		print "Starting unique ID stage."
+		print("Starting unique ID stage.")
 		# Filter out images with content in their SpecialInstructions EXIF tags.
 		images_without_ids = []
 		for image_file in found_list:
 			if not target_file_exif_data[image_file]['special_instructions']:
 				images_without_ids.append(image_file)
 		if len(images_without_ids) < 1:
-			print "All image files have unique ID tags.  Skipping unique ID stage."
+			print("All image files have unique ID tags.  Skipping unique ID stage.")
 		else:
-			print "Found " + str(len(images_without_ids)) + " image files without unique IDs."
+			print("Found " + str(len(images_without_ids)) + " image files without unique IDs.")
 
 			for image_file in images_without_ids:
 				exif_bits = target_file_exif_data[image_file]
@@ -608,23 +382,23 @@ def main(argv):
 	#          and embed them in any photos that are a reasonable timestamp match.
 
 	if len(found_list) < 1:
-		print "Skipping comment embed stage."
+		print("Skipping comment embed stage.")
 	else:
-		print "Starting comment embed stage."
+		print("Starting comment embed stage.")
 		# Filter out DNGs with valid GPS data in their EXIF tags.
 		images_without_comments = []
 		for image_file in found_list:
 			if not target_file_exif_data[image_file]['has_description']:
 				images_without_comments.append(image_file)
 		if len(images_without_comments) < 1:
-			print "All DNG files have embedded comments.  Skipping comment embed stage."
+			print("All DNG files have embedded comments.  Skipping comment embed stage.")
 		else:
-			print "Found " + str(len(images_without_comments)) + " DNG files without comments."
-			comments_to_consider = get_recent_short_comments()
+			print("Found " + str(len(images_without_comments)) + " DNG files without comments.")
+			comments_to_consider = get_recent_short_comments(config)
 			if len(comments_to_consider) < 1:
-				print "No un-paired comments to consider.  Skipping comment embed stage."
+				print("No un-paired comments to consider.  Skipping comment embed stage.")
 			else:
-				print "Found " + str(len(comments_to_consider)) + " comments to consider."
+				print("Found " + str(len(comments_to_consider)) + " comments to consider.")
 
 				comments_by_id = {}
 				for c in comments_to_consider:
@@ -673,7 +447,7 @@ def main(argv):
 						exif_bits = target_file_exif_data[image_file]
 
 						c = assigned_comment['content']
-						print exif_bits['file_name_no_ext'] + ":  " + c
+						print(exif_bits['file_name_no_ext'] + ":  " + c)
 						c_formatted = re.sub('"', "'", c)
 
 						exif_embed_args = [
@@ -687,25 +461,25 @@ def main(argv):
 	# Phase 5: Locate and parse all GPX files in working folder (from this or previous sessions)
 	#
 
-	gpx_list = look_for_files(gps_files_folder + "/*.gpx")
+	gpx_list = look_for_files(config['gps_files_folder'] + "/*.gpx")
 	if len(gpx_list) < 1:
-		print "No GPX files found in gps log folder.  Skipping geotag stage."
+		print("No GPX files found in gps log folder.  Skipping geotag stage.")
 		exit()
-	print "Found " + str(len(gpx_list)) + " GPX files."
+	print("Found " + str(len(gpx_list)) + " GPX files.")
 
 	# Parse the GPX files to find their earliest timepoint and latest timepoint.
 	gpx_files_stats = {}
 	valid_gps_files = []
 	for gpx_file in gpx_list:
-		earliest_start = datetime.max
-		latest_end = datetime.min
+		earliest_start = None
+		latest_end = None
 		with open(gpx_file, 'r') as gpx_file_handle:
 			gpx = gpxpy.parse(gpx_file_handle)
 			for track in gpx.tracks:
 				start_time, end_time = track.get_time_bounds()
-				if start_time < earliest_start:
+				if (earliest_start is None) or (start_time < earliest_start):
 					earliest_start = start_time
-				if end_time > latest_end:
+				if (latest_end is None) or (end_time > latest_end):
 					latest_end = end_time
 
 		diags = ''
@@ -724,11 +498,11 @@ def main(argv):
 			gpx_files_stats[gpx_file] = stats
 			valid_gps_files.append(gpx_file)
 
-		print gpx_file + ":\t  Start: " + pretty_datetime(earliest_start) + "   End: " + \
-				pretty_datetime(latest_end) + diags
+		print(gpx_file + ":\t  Start: " + pretty_datetime(earliest_start) + "   End: " + \
+				pretty_datetime(latest_end) + diags)
 
 	if len(valid_gps_files) < 1:
-		print "No GPX files have valid date ranges.  Skipping geotag stage."
+		print("No GPX files have valid date ranges.  Skipping geotag stage.")
 		exit()
 
 	# The plan here is to read all the data points from all the valid GPX files at once,
@@ -771,7 +545,7 @@ def main(argv):
 						all_gpx_points.append(p)
 						last_point = p
 
-	print "Sorting " + str(len(all_gpx_points)) + " GPX points."
+	print("Sorting " + str(len(all_gpx_points)) + " GPX points.")
 
 	sorted_gpx_points = sorted(all_gpx_points, key=lambda x: x['t'], reverse=False)
 
@@ -780,9 +554,9 @@ def main(argv):
 	#
 
 	if len(dng_list) < 1:
-		print "Skipping geotag stage."
+		print("Skipping geotag stage.")
 	else:
-		print "Starting geotag stage."
+		print("Starting geotag stage.")
 		# Filter out DNGs with valid GPS data in their EXIF tags.
 		dngs_without_gps = []
 		if replace_gps:
@@ -792,12 +566,12 @@ def main(argv):
 				if not target_file_exif_data[dng_file]['has_gps']:
 					dngs_without_gps.append(dng_file)
 		if len(dngs_without_gps) < 1:
-			print "All DNG files have GPS tags.  Skipping geotag stage."
+			print("All DNG files have GPS tags.  Skipping geotag stage.")
 		else:
 			if replace_gps:
-				print "Seeking GPS data for " + str(len(dngs_without_gps)) + " DNG files.  May overwrite existing GPS data."
+				print("Seeking GPS data for " + str(len(dngs_without_gps)) + " DNG files.  May overwrite existing GPS data.")
 			else:
-				print "Found " + str(len(dngs_without_gps)) + " DNG files without GPS data."
+				print("Found " + str(len(dngs_without_gps)) + " DNG files without GPS data.")
 
 			for dng_file in dngs_without_gps:
 				exif_bits = target_file_exif_data[dng_file]
@@ -817,7 +591,7 @@ def main(argv):
 				if i > 1 and i < (len(sorted_gpx_points)-1):
 					found_midpoint = True
 				if not found_midpoint:
-					print exif_bits['file_name_no_ext'] + ": No points within range."
+					print(exif_bits['file_name_no_ext'] + ": No points within range.")
 				else:
 					photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
 
@@ -826,7 +600,7 @@ def main(argv):
 					delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
 					delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
 					if delta_during > gap or delta_before > gap or delta_after > gap:
-						print exif_bits['file_name_no_ext'] + ": Falls on a gap larger than 15 minutes."
+						print(exif_bits['file_name_no_ext'] + ": Falls on a gap larger than 15 minutes.")
 					else:
 
 						# In GPX files, latitude and longitude are supplied as decimal degrees
@@ -872,8 +646,8 @@ def main(argv):
 						if el_calc < 0:
 							el_ref = "Below Sea Level"
 
-						print exif_bits['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
-								str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + "m " + el_ref
+						print(exif_bits['file_name_no_ext'] + ":  Lat " + str(abs(lat_calc)) + " " + lat_ref_str + "   Lon " + \
+								str(abs(lon_calc)) + " " + long_ref_str + "   Alt " + str(abs(el_calc)) + "m " + el_ref)
 
 						exif_gps_embed_args = [
 							'-GPSLatitude="' + str(abs(lat_calc)) + '"',
@@ -900,7 +674,7 @@ def main(argv):
 	template_html = template_file_h.read()
 
 	if not os.path.isdir(chart_output_folder):
-		print "Cannot find chart output path " + chart_output_folder + " ."
+		print("Cannot find chart output path " + chart_output_folder + " .")
 		exit()
 
 	# Break all our GPX data into continuous chunks defined by gaps larger than six hours between them.
@@ -935,7 +709,7 @@ def main(argv):
 			new_range['start'] = this_range_start
 			new_range['end'] = i-1
 			continuous_ranges.append(new_range)
-	print "Found " + str(len(continuous_ranges)) + " continuous ranges."
+	print("Found " + str(len(continuous_ranges)) + " continuous ranges.")
 
 	# Turn each range into a minimal JSON data format, breaking each type of data out
 	# into separate arrays to eliminate the redundant field names.
@@ -995,7 +769,7 @@ def main(argv):
 	with open(json_out_path, 'w') as json_out_handle:
 		json.dump(gallery_json_obj, json_out_handle)
 
-	print "Done."
+	print("Done.")
 
 
 if __name__ == "__main__":

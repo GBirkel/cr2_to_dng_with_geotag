@@ -1,4 +1,4 @@
-#!/usr/local/bin/python
+#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3
 
 import os, sys, re
 import getopt
@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import gpxpy
 import json
-import hashlib
+from common_utils import *
 
 # We can't upload route recordings directly from the route gallery web page,
 # since it runs afoul of a security restriction in Apache on the server side.
@@ -21,23 +21,18 @@ import hashlib
 # actually being handed a file by user interaction, for security reasons.)
 
 #
-# Customize before using:
+# Customize config.xml before using!
 #
-
-api_seekrit = 'CHANGE THIS'
-route_upload_url = "https://mile42.net/wp-json/ptws/v1/route/create"
-
-chart_output_folder = "/Users/gbirkel/Documents/Travel/GPS"	# For generating map+graph pages
 
 
 # Support function to upload a given route id and route data
-def route_upload_via_curl(route_id, route_body):
-	tmp_out_path = os.path.join(chart_output_folder, 'temp_route_upload.txt')
+def route_upload_via_curl(config, route_id, route_body):
+	tmp_out_path = os.path.join(config['chart_output_folder'], 'temp_route_upload.txt')
 	to = open(tmp_out_path, "w")
 	to.write(route_body)
 	to.close()
 
-	curl_command = 'curl -F id=\"' + route_id + '\" -F route=@' + tmp_out_path + ' -F key=\"' + api_seekrit + '\" ' + route_upload_url
+	curl_command = 'curl -F id=\"' + route_id + '\" -F route=@' + tmp_out_path + ' -F key=\"' + config['api_seekrit'] + '\" ' + config['route_upload_url']
 	print curl_command
 
 	try:
@@ -66,20 +61,25 @@ def main(argv):
 		sys.exit(2)
 	print 'Index to upload is ', upload_index
 
-	if not os.path.isdir(chart_output_folder):
-		print "Cannot find folder chart_output_folder: " + chart_output_folder + " ."
+	config = read_config()
+	if config is None:
+		print('Error reading your config.xml file!')
+		sys.exit(2)
+
+	if not os.path.isdir(config['chart_output_folder']):
+		print "Cannot find folder chart_output_folder: " + config['chart_output_folder'] + " ."
 		exit()
 
-	tmp_in_path = os.path.join(chart_output_folder, 'route_gallery.json')
+	tmp_in_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
 	with open(tmp_in_path, 'r') as t_file_handle:
 		tdata = json.load(t_file_handle)
 
 	# To upload the whole set:
 	#for rt in tdata['a']:
-	#	route_upload_via_curl(rt[0], rt[1])
+	#	route_upload_via_curl(config, rt[0], rt[1])
 
 	rt = tdata['a'][upload_index-1]
-	route_upload_via_curl(rt[0], rt[1])
+	route_upload_via_curl(config, rt[0], rt[1])
 
 	exit()
 

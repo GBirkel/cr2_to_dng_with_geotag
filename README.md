@@ -1,4 +1,8 @@
-# Canon RAW to DNG, with geotag gap-filling, a.k.a. cr2_to_dng_with_geotag
+# Camera RAW utility scripts
+
+# Script 1: Canon RAW import to DNG, with geotag gap-filling.
+
+## Script name: `import_and_convert.sh`
 
 This is a Python script that does the following:
 
@@ -16,8 +20,6 @@ I recommend creating an Automator action to run this script, so you can just plu
 
 This script is only compatible with MacOS but perhaps it can serve as a reference for others developing on other platforms.
 
-***
-
 ## Actions performed by the script, in detail
 
 1. Check for required tools/folders.
@@ -33,9 +35,9 @@ If image files are present on a card:
 
 If GPS data files are present on a device:
 
-8. Convert them to GPX, auto-splitting the activities if there is a 4-hour gap.
+8. Convert them to GPX, auto-splitting the activities if there is a 6-hour gap.
 9. Rename the original files to flag that they were processed.
-10. Create an HTML gallery page with each activity plotted on a map.
+10. Create an HTML gallery page with each activity plotted on a map (using Leaflet and jQuery).
 
 If there are DNG files in the target folder, from this run or an earlier one:
 
@@ -43,13 +45,14 @@ If there are DNG files in the target folder, from this run or an earlier one:
 12. Read in all GPX data files, from this run or an earlier one.
 13. If any of the track times overlap the image time, geotag the image with a point between the nearest two points.
 
-***
+You now have DNG-formet, geotagged images, suitable for importing into Lightroom or some other photo software.
 
 ## Before using:
 
 * `brew install exiftool`
 * `brew install gpsbabel`
 * `pip install gpxpy`
+* Customize the `config.xml` file
 * Download and install Adobe DNG Converter (https://supportdownloads.adobe.com/detail.jsp?ftpID=6319)
 
 ***
@@ -63,7 +66,30 @@ Canon 5DS Mk IV firmware prior to 1.1.2 does not embed enough EXIF info for exif
 
 This script deals with CR2 files from either kind of firmware, but nevertheless, you should [upgrade your Mk IV](https://www.usa.canon.com/internet/portal/us/home/support/details/cameras/dslr/eos-5d-mark-iv?subtab=downloads-firmware) if you haven't already.
 
+Later Canon models, like the R5, form their EXIF tags correctly and work fine with this script.
+
 ***
+
+# Script 2: Synchronize a folder of JPG photos with Flickr
+
+## Script name: `flickr_sync.sh`
+
+This is a Python script that does the following:
+
+* Looks in a local folder for any JPG files, presumably exported by a photo program like Lightroom.
+* Gathers their dimensions and origination date from the EXIF tag.
+* Connects to Flickr, and sees if there are any photos already uploaded that match the date and dimensions exactly.
+* If a local photo is not represented on Flickr, it uploads the file to Flickr.
+* It adds the newly uploaded photo to an album.
+
+If the local photo does not have an origination date, or the dimensions cannot be determined, it is skipped.
+
+## Before using:
+
+* Make sure the Apple command-line developer tools are installed.
+* `brew install exiftool`
+* `/Applications/Xcode.app/Contents/Developer/usr/bin/python3 -m pip install flickrapi`
+* Customize the `config.xml` file.
 
 #### References:
 
@@ -73,3 +99,6 @@ This script deals with CR2 files from either kind of firmware, but nevertheless,
 * https://www.sno.phy.queensu.ca/~phil/exiftool/faq.html
 * https://github.com/guinslym/pyexifinfo
 * https://github.com/tkrajina/gpxpy
+* https://stuvel.eu/flickrapi-doc/index.html
+* https://www.flickr.com/services/api/
+* https://docs.python.org/3/library/xml.etree.elementtree.html#xml.etree.ElementTree.ElementTree
