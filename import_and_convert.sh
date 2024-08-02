@@ -135,7 +135,7 @@ def main(argv):
 					'-F',					# Output file
 					'"' + path_to_gpx + '"'
 				]
-				fit_convert_cmd = gpsbabel + " " + ' '.join(gpsbabel_args)
+				fit_convert_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
 				fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
 				# If we use move, MacOS will attempt to copy file permissions.
 				# On Garmin devices, FIT files are shown with permissions of 777.
@@ -209,7 +209,7 @@ def main(argv):
 
 				exif_bits = get_exif_bits_from_file(config['exiftool'], original)
 
-				if prepend_datestamp_to_photo_files == 'True':
+				if config['prepend_datestamp_to_photo_files'] == 'True':
 					target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
 				else:
 					target_file = exif_bits['file_name_no_ext'] + ".dng"
@@ -267,7 +267,7 @@ def main(argv):
 					# -W : Block and wait for the application to exit
 					# -a : Path to application to open
 					# --args : Everything beyond here should be passed to the application
-					conv_command = "open -j -n -W -a \"" + dngconverter + "\" --args " + ' '.join(conv_args)
+					conv_command = "open -j -n -W -a \"" + config['dngconverter'] + "\" --args " + ' '.join(conv_args)
 
 					dng_conv_output = subprocess.check_output(conv_command, shell=True)
 
