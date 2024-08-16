@@ -374,7 +374,7 @@ def main(argv):
 					'"' + image_file + '"'
 				]
 				# For some reason this fails on HEIC images.  Not sure why.
-				exif_id_embed_cmd = exiftool + " " + ' '.join(exif_id_embed_args)
+				exif_id_embed_cmd = config['exiftool'] + " " + ' '.join(exif_id_embed_args)
 				exif_id_embed_out = subprocess.check_output(exif_id_embed_cmd, shell=True)
 
 	#
@@ -454,7 +454,7 @@ def main(argv):
 							'-Description="' + c_formatted + '"',
 							'"' + image_file + '"'
 						]
-						exif_embed_cmd = exiftool + " " + ' '.join(exif_embed_args)
+						exif_embed_cmd = config['exiftool'] + " " + ' '.join(exif_embed_args)
 						exif_embed_out = subprocess.check_output(exif_embed_cmd, shell=True)
 
 	#
@@ -659,7 +659,7 @@ def main(argv):
 							'-GPSStatus="Measurement Active"',
 							'"' + dng_file + '"'
 						]
-						exif_gps_embed_cmd = exiftool + " " + ' '.join(exif_gps_embed_args)
+						exif_gps_embed_cmd = config['exiftool'] + " " + ' '.join(exif_gps_embed_args)
 						exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 	#
