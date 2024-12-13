@@ -594,8 +594,7 @@ def main(argv):
 					print(exif_bits['file_name_no_ext'] + ": No points within range.")
 				else:
 					photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
-
-					gap = maximum_gps_time_difference_from_photo
+					gap = timedelta(seconds=int(config['maximum_gps_time_difference_from_photo']))
 					delta_during = sorted_gpx_points[i]['t'] - sorted_gpx_points[i-1]['t']
 					delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
 					delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
@@ -673,8 +672,8 @@ def main(argv):
 	template_file_h = open("route_template.html", "r")
 	template_html = template_file_h.read()
 
-	if not os.path.isdir(chart_output_folder):
-		print("Cannot find chart output path " + chart_output_folder + " .")
+	if not os.path.isdir(config['chart_output_folder']):
+		print("Cannot find chart output path " + config['chart_output_folder'] + " .")
 		exit()
 
 	# Break all our GPX data into continuous chunks defined by gaps larger than six hours between them.
@@ -714,8 +713,8 @@ def main(argv):
 	# Turn each range into a minimal JSON data format, breaking each type of data out
 	# into separate arrays to eliminate the redundant field names.
 
-	chart_out_path = os.path.join(chart_output_folder, 'route_gallery.html')
-	json_out_path = os.path.join(chart_output_folder, 'route_gallery.json')
+	chart_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.html')
+	json_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
 
 	cofh = open(chart_out_path, "w")
 	cofh.write(template_html)

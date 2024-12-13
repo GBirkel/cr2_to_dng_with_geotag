@@ -102,7 +102,7 @@ def get_exif_bits_from_file(exiftool, file_pathname):
 	exif_out = subprocess.check_output(
 		exiftool + " -a -s -j " +
 			"-GPSStatus -GPSPosition -TimeZone -OffsetTime -ImageSize -SubSecCreateDate -Description " +
-			"-Source -SpecialInstructions -OriginalTransmissionReference " +
+			"-Source -SpecialInstructions -OriginalTransmissionReference -DateTimeOriginal " +
 			file_pathname, shell=True)
 	exif_out_str = codecs.utf_8_decode(exif_out)[0]
 	exif_parsed = json.loads(exif_out_str)
@@ -150,11 +150,17 @@ def get_exif_bits_from_file(exiftool, file_pathname):
 	# Try to properly handle the time and time zone
 	#
 
-	if 'SubSecCreateDate' not in exif_json:
+	date_and_time_tag = None
+
+
+	if 'SubSecCreateDate' in exif_json:
+		date_and_time_tag = exif_json['SubSecCreateDate']
+	elif 'DateTimeOriginal' in exif_json:
+		date_and_time_tag = exif_json['DateTimeOriginal']
+
+	if date_and_time_tag == None:
 		results['has_creation_date'] = False
 		return results
-
-	date_and_time_tag = exif_json['SubSecCreateDate']
 
 	d, t = date_and_time_tag.split(u' ')
 	df = re.sub(':', '-', d)
