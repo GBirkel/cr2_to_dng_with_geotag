@@ -33,13 +33,13 @@ def route_upload_via_curl(config, route_id, route_body):
 	to.close()
 
 	curl_command = 'curl -F id=\"' + route_id + '\" -F route=@' + tmp_out_path + ' -F key=\"' + config['api_seekrit'] + '\" ' + config['route_upload_url']
-	print curl_command
+	print(curl_command)
 
 	try:
 		route_up_out = subprocess.check_output(curl_command, shell=True)
-		print route_up_out
+		print(route_up_out)
 	except subprocess.CalledProcessError:
-		print "Error uploading!"
+		print("Error uploading!")
 	os.remove(tmp_out_path)
 
 
@@ -48,18 +48,18 @@ def main(argv):
 	try:
 		opts, args = getopt.getopt(argv,"hi:",["index="])
 	except getopt.GetoptError:
-		print 'Route_Uploader.sh -i <index of route to upload>'
+		print('Route_Uploader.sh -i <index of route to upload>')
 		sys.exit(2)
 	for opt, arg in opts:
 		if opt == '-h':
-			print 'Route_Uploader.sh -i <index of route to upload>'
+			print('Route_Uploader.sh -i <index of route to upload>')
 			sys.exit()
 		elif opt in ("-i", "--index"):
 			upload_index = int(float(arg))
 	if upload_index < 1:
-		print 'Index to upload must be greater than 0'
+		print('Index to upload must be greater than 0')
 		sys.exit(2)
-	print 'Index to upload is ', upload_index
+	print('Index to upload is ' + str(upload_index))
 
 	config = read_config()
 	if config is None:
@@ -67,7 +67,7 @@ def main(argv):
 		sys.exit(2)
 
 	if not os.path.isdir(config['chart_output_folder']):
-		print "Cannot find folder chart_output_folder: " + config['chart_output_folder'] + " ."
+		print("Cannot find folder chart_output_folder: " + config['chart_output_folder'] + " .")
 		exit()
 
 	tmp_in_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
