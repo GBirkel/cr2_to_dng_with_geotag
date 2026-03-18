@@ -10,6 +10,7 @@ import json
 import hashlib
 from common_utils import *
 from datetime import datetime, tzinfo, timedelta
+import math
 
 #
 # Customize config.xml before using!
@@ -662,12 +663,14 @@ def main(argv):
 						exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 	#
-	# Phase 7: Use current stock of GPX data to generate embeddable data for an inline google map
+	# Phase 7: Use current stock of GPX data to generate embeddable data for an inline map
 	#          and an inline jsChart, broken across gaps in recording larger than six hours
 
 	# The "larger than six hour break" rule is needed because the beginning and ending of each day
 	# will change based on the time zone, so breaking across days is cumbersome, especially
 	# if the rider rides past midnight.
+
+
 
 	template_file_h = open("route_template.html", "r")
 	template_html = template_file_h.read()
@@ -675,6 +678,108 @@ def main(argv):
 	if not os.path.isdir(config['chart_output_folder']):
 		print("Cannot find chart output path " + config['chart_output_folder'] + " .")
 		exit()
+
+	# Average the position and speed values of all points,
+	# based on whatever points were recorded during the previous six seconds.
+
+	smoothed_gpx_points = []
+	# A pool of all previously seen points that are within 6.01 seconds
+	# of the current point (including the current point).
+	point_pool = []
+	smoothing_range = timedelta(seconds=6)
+	i = 0
+	# We will be handling all these attributes the same way
+	types_to_smooth = ['lat', 'lon', 'el', 'spd']
+	while i < len(sorted_gpx_points):
+		current_point = sorted_gpx_points[i]
+		i += 1
+
+		cur_time = current_point['t']
+
+		point_pool.append(current_point);
+		# Drop any point older than 6.01 seconds.
+		# This way, large gaps in the recorded data halt the smoothing effect.
+		filtered_pool = []
+		for p in point_pool:
+			if cur_time - p['t'] < smoothing_range:
+				filtered_pool.append(p)
+		point_pool = filtered_pool
+		# Start with a template point that has all the
+		# attributes we wish to smooth zeroed out.
+		smoothed_point = {
+			't': cur_time,
+			'lat': 0.0,
+			'lon': 0.0,
+			'el': 0.0,
+			'spd': 0.0,
+			'op': current_point['op']
+		}
+		total_multiplier = 0;
+		# Add each point's attributes to the template point, multiplying them
+		# first by a 'force multiplier' based on the distance in time from the current point.
+		# The more distant the time (up to 6 seconds) the lower the force multiplier.
+		for p in point_pool:
+			this_multiplier = (timedelta(seconds=7) - (cur_time - p['t'])).total_seconds()
+			total_multiplier += this_multiplier
+			for measurement_type in types_to_smooth:
+				smoothed_point[measurement_type] += p[measurement_type] * this_multiplier;
+		# Divide the template attributes by the total force multiplier applied,
+		# to get values that make sense.  Basically, the new current point is like the
+		# old current point except it has ~6 seconds of "drag" applied to it.
+		for measurement_type in types_to_smooth:
+			smoothed_point[measurement_type] = smoothed_point[measurement_type] / total_multiplier;
+		smoothed_gpx_points.append(smoothed_point);
+
+	# Eliminate any points that are less than five meters from the previous point
+
+	# WGS-84 ellipsoid constants
+	WGS84_A = 6378137.0          # Semi-major axis (meters)
+	WGS84_F = 1 / 298.257223563  # Flattening
+	WGS84_E2 = WGS84_F * (2 - WGS84_F)  # Square of eccentricity
+
+	reduced_gpx_points = []
+	skipped_gps_points = []
+	previous_good_point = None
+	i = 1
+	while i < len(smoothed_gpx_points):
+		pt = smoothed_gpx_points[i]
+		i += 1
+
+		lat = pt['lat']
+		lon = pt['lon']
+		alt_m = pt['el']
+
+		# Convert degrees to radians
+		lat_rad = math.radians(lat)
+		lon_rad = math.radians(lon)
+
+		# Prime vertical radius of curvature
+		N = WGS84_A / math.sqrt(1 - WGS84_E2 * math.sin(lat_rad)**2)
+
+		# Calculate ECEF coordinates
+		x = (N + alt_m) * math.cos(lat_rad) * math.cos(lon_rad)
+		y = (N + alt_m) * math.cos(lat_rad) * math.sin(lon_rad)
+		z = (N * (1 - WGS84_E2) + alt_m) * math.sin(lat_rad)
+
+		if previous_good_point is None:
+			previous_good_point = [x, y, z]
+			reduced_gpx_points.append(pt)
+			continue
+
+		distance = math.sqrt(
+            (previous_good_point[0] - x) ** 2 +
+            (previous_good_point[1] - y) ** 2 +
+            (previous_good_point[2] - z) ** 2
+        )
+
+		if distance < 5.0:
+			skipped_gps_points.append(pt)
+			continue
+
+		previous_good_point = [x, y, z]
+		reduced_gpx_points.append(pt)
+
+	print("Skipped " + str(len(skipped_gps_points)) + " points that were too close.")
 
 	# Break all our GPX data into continuous chunks defined by gaps larger than six hours between them.
 
@@ -685,13 +790,14 @@ def main(argv):
 		smallest_allowable_gap = timedelta(hours=6)
 
 	this_range_start = 0
-	prev_time = sorted_gpx_points[0]['t']
+	prev_time = reduced_gpx_points[0]['t']
 	i = 1
 
-	while i < len(sorted_gpx_points):
-		cur_time = sorted_gpx_points[i]['t']
+	while i < len(reduced_gpx_points):
+		cur_time = reduced_gpx_points[i]['t']
 		time_delta = cur_time - prev_time
-		# If the gap betewen this point and the last is larger than 6 hours, declare a new range
+		# If the gap betewen this point and the last is larger than smallest_allowable_gap,
+		# declare a new range
 		if time_delta > smallest_allowable_gap:
 			# Runs less than 60 samples are ignored
 			if (i - this_range_start) > 60:
@@ -730,7 +836,7 @@ def main(argv):
 		spd = []
 		i = r['start']
 		while i <= r['end']:
-			pt = sorted_gpx_points[i]
+			pt = reduced_gpx_points[i]
 			lat.append(str(pt['lat']))
 			lon.append(str(pt['lon']))
 			el.append(str(pt['el']))
