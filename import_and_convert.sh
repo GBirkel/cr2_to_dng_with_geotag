@@ -695,11 +695,6 @@ def main(argv):
 	# will change based on the time zone, so breaking across days is cumbersome, especially
 	# if the rider rides past midnight.
 
-
-
-	template_file_h = open("route_template.html", "r")
-	template_html = template_file_h.read()
-
 	if not os.path.isdir(config['chart_output_folder']):
 		print("Cannot find chart output path " + config['chart_output_folder'] + " .")
 		exit()
@@ -726,7 +721,7 @@ def main(argv):
 		# This way, large gaps in the recorded data halt the smoothing effect.
 		filtered_pool = []
 		for p in point_pool:
-			if cur_time - p['t'] < smoothing_range:
+			if abs(cur_time - p['t']) < smoothing_range:
 				filtered_pool.append(p)
 		point_pool = filtered_pool
 		# Start with a template point that has all the
@@ -739,7 +734,7 @@ def main(argv):
 			'spd': 0.0,
 			'op': current_point['op']
 		}
-		total_multiplier = 0;
+		total_multiplier = 0
 		# Add each point's attributes to the template point, multiplying them
 		# first by a 'force multiplier' based on the distance in time from the current point.
 		# The more distant the time (up to 6 seconds) the lower the force multiplier.
@@ -755,21 +750,13 @@ def main(argv):
 			smoothed_point[measurement_type] = smoothed_point[measurement_type] / total_multiplier;
 		smoothed_gpx_points.append(smoothed_point);
 
-	# Eliminate any points that are less than five meters from the previous point
+	# Calculate all points as ECEF coordinates so they can be compared in 3D space.
 
 	# WGS-84 ellipsoid constants
 	WGS84_A = 6378137.0          # Semi-major axis (meters)
 	WGS84_F = 1 / 298.257223563  # Flattening
 	WGS84_E2 = WGS84_F * (2 - WGS84_F)  # Square of eccentricity
-
-	reduced_gpx_points = []
-	skipped_gps_points = []
-	previous_good_point = None
-	i = 1
-	while i < len(smoothed_gpx_points):
-		pt = smoothed_gpx_points[i]
-		i += 1
-
+	for pt in smoothed_gpx_points:
 		lat = pt['lat']
 		lon = pt['lon']
 		alt_m = pt['el']
@@ -782,9 +769,23 @@ def main(argv):
 		N = WGS84_A / math.sqrt(1 - WGS84_E2 * math.sin(lat_rad)**2)
 
 		# Calculate ECEF coordinates
-		x = (N + alt_m) * math.cos(lat_rad) * math.cos(lon_rad)
-		y = (N + alt_m) * math.cos(lat_rad) * math.sin(lon_rad)
-		z = (N * (1 - WGS84_E2) + alt_m) * math.sin(lat_rad)
+		pt['x'] = (N + alt_m) * math.cos(lat_rad) * math.cos(lon_rad)
+		pt['y'] = (N + alt_m) * math.cos(lat_rad) * math.sin(lon_rad)
+		pt['z'] = (N * (1 - WGS84_E2) + alt_m) * math.sin(lat_rad)
+
+	# Eliminate any points that are less than five meters from the previous point
+
+	reduced_gpx_points = []
+	skipped_gps_points = []
+	previous_good_point = None
+	i = 0
+	while i < len(smoothed_gpx_points):
+		pt = smoothed_gpx_points[i]
+		i += 1
+
+		x = pt['x']
+		y = pt['y']
+		z = pt['z']
 
 		if previous_good_point is None:
 			previous_good_point = [x, y, z]
@@ -804,53 +805,79 @@ def main(argv):
 		previous_good_point = [x, y, z]
 		reduced_gpx_points.append(pt)
 
-	print("Skipped " + str(len(skipped_gps_points)) + " points that were too close.")
+	if len(sorted_gpx_points) > 0:
+		percentage_reduced = (len(sorted_gpx_points) - len(reduced_gpx_points)) / len(sorted_gpx_points) * 100
+		print("Skipped " + str(len(skipped_gps_points)) + " points that were too close, for a {:.2f}%".format(percentage_reduced) + " reduction.")
 
-	# Break all our GPX data into continuous chunks defined by gaps larger than six hours between them.
+	# Break all our GPX data into continuous chunks defined by gaps larger than six hours, or distcontinuities in distance larger than 1000 meters.
 
 	continuous_ranges = []
+	smallest_allowable_distance_gap = 1000.0  # meters
 	if do_not_split_gpx:
-		smallest_allowable_gap = timedelta(hours=60000)
+		smallest_allowable_time_gap = timedelta(hours=60000)
 	else:
-		smallest_allowable_gap = timedelta(hours=6)
+		smallest_allowable_time_gap = timedelta(hours=6)
 
 	this_range_start = 0
 	prev_time = reduced_gpx_points[0]['t']
+	prev_location = [reduced_gpx_points[0]['x'], reduced_gpx_points[0]['y'], reduced_gpx_points[0]['z']]
 	i = 1
 
 	while i < len(reduced_gpx_points):
-		cur_time = reduced_gpx_points[i]['t']
+		pt = reduced_gpx_points[i]
+
+		cur_time = pt['t']
 		time_delta = cur_time - prev_time
-		# If the gap betewen this point and the last is larger than smallest_allowable_gap,
+
+		x = pt['x']
+		y = pt['y']
+		z = pt['z']
+
+		distance = math.sqrt(
+			(prev_location[0] - x) ** 2 +
+			(prev_location[1] - y) ** 2 +
+			(prev_location[2] - z) ** 2
+		)
+
+		# If the gap betewen this point and the last is larger than smallest_allowable_time_gap,
+		# or if the distance between this point and the last is larger than smallest_allowable_distance_gap,
 		# declare a new range
-		if time_delta > smallest_allowable_gap:
+		new_range = False
+		treat_as_leg = False
+
+		if time_delta > smallest_allowable_time_gap:
+			print("Found a time gap of {} hours at between time {} and {}".format(time_delta.total_seconds() / 3600, pretty_datetime(prev_time), pretty_datetime(cur_time)))
+			new_range = True
+		elif distance > smallest_allowable_distance_gap:
+			print("Found a distance gap of {:.2f} meters between time {} and {}".format(distance, pretty_datetime(prev_time), pretty_datetime(cur_time)))
+			new_range = True
+			# If the current point has a gap in space but not time, we treat the range we're about to declare as a leg.
+			treat_as_leg = True
+
+		prev_time = cur_time
+		prev_location = [x, y, z]
+
+		if new_range:
 			# Runs less than 60 samples are ignored
 			if (i - this_range_start) > 60:
 				new_range = {}
 				new_range['start'] = this_range_start
 				new_range['end'] = i-1
+				new_range['treat_as_leg'] = treat_as_leg
 				continuous_ranges.append(new_range)
 			this_range_start = i
-		prev_time = cur_time
 		i += 1
 	if i > 1:
 		if (i - this_range_start) > 60:
 			new_range = {}
 			new_range['start'] = this_range_start
 			new_range['end'] = i-1
+			new_range['treat_as_leg'] = False
 			continuous_ranges.append(new_range)
 	print("Found " + str(len(continuous_ranges)) + " continuous ranges.")
 
 	# Turn each range into a minimal JSON data format, breaking each type of data out
-	# into separate arrays to eliminate the redundant field names.
-
-	chart_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.html')
-	json_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
-
-	cofh = open(chart_out_path, "w")
-	cofh.write(template_html)
-
-	gallery_json = []
+	# into separate arrays to eliminate the redundant field names
 
 	for r in continuous_ranges:
 		lat = []
@@ -869,27 +896,59 @@ def main(argv):
 			t_quoted.append('"' + pt['t'].isoformat() + '"')
 			spd.append(str(pt['spd']))
 			i += 1
-		
-		range_identifier = t[0]
-		if do_not_split_gpx:
-			range_identifier = range_identifier.split('T')[0] + "-notsplit"
 
-		cofh.write("<div class='ptws-ride-log' rideid=" + '"' + range_identifier + '"' + ">\n<div class='data'>\n")
+		range_json_str = "{" + \
+						'"lat":[' + ','.join(lat) + "]," + \
+						'"lon":[' + ','.join(lon) + "]," + \
+						'"el":[' + ','.join(el) + "]," + \
+						'"t":[' + ','.join(t_quoted) + "]," + \
+						'"spd":[' + ','.join(spd) + "]" + \
+						"}"
+		r['identifier'] = reduced_gpx_points[r['start']]['t'].isoformat()
+		r['json_str'] = range_json_str
 
-		range_json_str = "{\n" + \
-						'"lat":[' + ','.join(lat) + "],\n" + \
-						'"lon":[' + ','.join(lon) + "],\n" + \
-						'"el":[' + ','.join(el) + "],\n" + \
-						'"t":[' + ','.join(t_quoted) + "],\n" + \
-						'"spd":[' + ','.join(spd) + "]\n" + \
-						"}\n"
+	# Collect ranges that have gaps in space but not time, as legs in the same ride.
 
+	rides = []
+	current_ride = []
+	ride_identifier = None
+	for r in continuous_ranges:
+		range_json = r['json_str']
+		if len(current_ride) == 0:
+			ride_identifier = r['identifier']
+		current_ride.append(range_json)
+		if not r['treat_as_leg']:
+			rides.append([ride_identifier, current_ride])
+			current_ride = []
+
+	# Write the ranges out to an HTML gallery and a JSON file.
+
+	chart_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.html')
+	json_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
+
+	template_file_h = open("route_template.html", "r")
+	template_html = template_file_h.read()
+	template_file_h.close()
+
+	cofh = open(chart_out_path, "w")
+	cofh.write(template_html)
+	gallery_json = []
+
+	for r in rides:
+		ride_identifier = r[0]
+
+		legs = r[1]
+		range_json_str = legs[0]
+		if len(legs) > 1:
+			range_json_str = '{"legs":[' + ','.join(legs) + ']}'
+	
+		cofh.write("<div class='ptws-ride-log' rideid=" + '"' + r[0] + '"' + ">\n<div class='data'>")
 		# We write this JSON structure out twice:
 		# Once in the HTML file to display the routes in a gallery,
 		cofh.write(range_json_str)
 		cofh.write("</div>\n</div>\n")
 		# and once in a JSON file that we use as reference material for uploading the routes to the web
-		gallery_json.append([range_identifier, range_json_str])
+		gallery_json.append([ride_identifier, range_json_str])
 
 	cofh.write("\n</body>\n</html>")
 	cofh.close()
