@@ -122,6 +122,7 @@ def main(argv):
 			if not os.path.isdir(archive_path):
 				os.makedirs(archive_path)
 
+			resulting_gps_files = []
 			for fit_file in fit_files:
 				base_name = fit_file.split('/')[-1]
 				base_name_no_ext = ''.join(base_name.split('.')[0:-1])
@@ -145,7 +146,31 @@ def main(argv):
 				# So we use copyfile instead, which does not attempt to set equivalent permissions, then remove the source file afterwards.
 				shutil.copyfile(fit_file, os.path.join(archive_path, base_name))
 				os.remove(fit_file)
+				resulting_gps_files.append(path_to_gpx)
 			print("Converted " + str(len(fit_files)) + " FIT files to GPX.")
+
+			# Now that we're created GPX files, we invoke GPSBabel again to split the GPX data on gaps in distance.
+			# The application currently doesn't support splitting on distance OR time in one go.
+			# https://github.com/gpsbabel/gpsbabel/issues/379
+
+			if not do_not_split_gpx:
+				print("Splitting GPX again on distances larger than 1000 meters.")
+				for gps_file in resulting_gps_files:
+					base_name = gps_file.split('/')[-1]
+					base_name_no_ext = ''.join(base_name.split('.')[0:-1])
+					path_to_split_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '-split.gpx')
+					gpsbabel_args = [
+						'-i gpx',				# Input format
+						'-f',					# Input file
+						gps_file,
+						'-x track,pack,split=1000m,title="LOG # %c"', # Split if gap is larger than 1000 meters
+						'-o gpx,garminextensions=1',				# Output format GPX with Garmin extensions
+						'-F',					# Output file
+						'"' + path_to_split_gpx + '"'
+					]
+					gpx_split_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
+					gpx_split_out = subprocess.check_output(gpx_split_cmd, shell=True)
+					os.remove(gps_file)
 
 	#
 	# Phase 2: Import new CR files from camera card device (and convert to DNG)
