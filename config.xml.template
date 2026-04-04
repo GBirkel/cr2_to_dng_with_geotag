@@ -6,7 +6,6 @@
     <dngconverter>/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter</dngconverter>
 
     <garmin_gps_volume>/Volumes/GARMIN</garmin_gps_volume>
-    <!-- <garmin_gps_volume>/Users/johndoe/Documents/Travel/GPS/Reprocess</garmin_gps_volume> -->
 
     <!-- Source folders for raw photos --> 
     <local_cr_folder>/Users/johndoe/Pictures/DNG_RAW_In</local_cr_folder>
@@ -17,6 +16,8 @@
 
     <!-- For GPX files from the GPS, to use for assigning geotags --> 
     <gps_files_folder>/Users/johndoe/Documents/Travel/GPS</gps_files_folder>
+    <!-- If you have raw files from a GPS that are already off the unit, put them here to process them. --> 
+    <gps_files_reprocess_folder>/Users/johndoe/Documents/Travel/GPS/Reprocess</gps_files_reprocess_folder>
     <!-- For generating map+graph pages --> 
     <chart_output_folder>/Users/johndoe/Documents/Travel/GPS</chart_output_folder>
 

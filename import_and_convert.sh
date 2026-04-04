@@ -83,7 +83,7 @@ def main(argv):
 	for opt, arg in opts:
 		if opt == '-h':
 			print('-g or --nosplitongaps to turn off splitting of GPS data at 4-hour gaps')
-			print('-r or --replacegps to overwrite existing GPS data where new data is found')
+			print('-r or --replacegps to overwrite existing GPS data in photos when new data is available')
 			sys.exit()
 		if opt in ("-g", "--nosplitongaps"):
 			do_not_split_gpx = True
@@ -96,7 +96,7 @@ def main(argv):
 		sys.exit(2)
 
 	local_cr_archive_folder = config['local_cr_folder'] + "/processed"
-	card_archive_folder = config['card_volume'] + "/archived"
+	photo_card_archive_folder = config['card_volume'] + "/archived"
 
 	time_offset_for_photo_locations = timedelta(seconds=int(config['time_offset_for_photo_locations']))
 	altitude_offset_for_photo_locations = float(config['altitude_offset_for_photo_locations'])
@@ -109,68 +109,73 @@ def main(argv):
 	# Phase 1: Import new FIT files from GPS device (and convert to GPX)
 	#
 
+	folders_to_search_for_fit_files = [config['gps_files_reprocess_folder'] + "/*.fit"]
 	if os.path.exists(config['garmin_gps_volume']):
 		print("Found GPS path.")
-		e = look_for_files(config['garmin_gps_volume'] + "/Garmin/Activities/*.fit")	# Edge 500,530
-		f = look_for_files(config['garmin_gps_volume'] + "/Garmin/ACTIVITY/*.FIT")	# Edge 130
-		g = look_for_files(config['garmin_gps_volume'] + "/Garmin/Activity/*.fit")	# Edge 130+
-		fit_files = e + f + g
-		if len(fit_files) > 0:
-			# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
-			# causing them to be re-imported.
-			archive_path = os.path.join(config['gps_files_folder'], 'Processed')
-			if not os.path.isdir(archive_path):
-				os.makedirs(archive_path)
+		folders_to_search_for_fit_files += [
+			config['garmin_gps_volume'] + "/Garmin/Activities/*.fit",	# Edge 500,530
+			config['garmin_gps_volume'] + "/Garmin/ACTIVITY/*.FIT",	# Edge 130
+			config['garmin_gps_volume'] + "/Garmin/Activity/*.fit",	# Edge 130+
+		]
+	fit_files = look_for_files(folders_to_search_for_fit_files)
+	if len(fit_files) > 0:
+		# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
+		# causing them to be re-imported.
+		archive_path = os.path.join(config['gps_files_folder'], 'Processed')
+		if not os.path.isdir(archive_path):
+			os.makedirs(archive_path)
 
-			resulting_gps_files = []
-			for fit_file in fit_files:
-				base_name = fit_file.split('/')[-1]
+		resulting_gps_files = []
+		for fit_file in fit_files:
+			base_name = fit_file.split('/')[-1]
+			base_name_no_ext = ''.join(base_name.split('.')[0:-1])
+			print(fit_file)
+			path_to_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '.gpx')
+			gpsbabel_args = [
+				'-i garmin_fit',		# Input format
+				'-f',					# Input file
+				fit_file,
+				'-x track,pack,split=4h,title="LOG # %c"',	# Split activities if gap is larger than 4 hours
+				'-o gpx,garminextensions=1',				# Output format GPX with Garmin extensions
+				'-F',					# Output file
+				'"' + path_to_gpx + '"'
+			]
+			fit_convert_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
+			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
+			# If we use move, MacOS will attempt to copy file permissions.
+			# On Garmin devices, FIT files are shown with permissions of 777.
+			# Since the executable permission is set, MacOS will try to apply that, which will fail due to system protection measures.
+			# Trying to change the permissions on the source file in place will have no result.
+			# So we use copyfile instead, which does not attempt to set equivalent permissions, then remove the source file afterwards.
+			shutil.copyfile(fit_file, os.path.join(archive_path, base_name))
+			os.remove(fit_file)
+			resulting_gps_files.append(path_to_gpx)
+		print("Converted " + str(len(fit_files)) + " FIT files to GPX.")
+
+		# Now that we're created GPX files, we invoke GPSBabel again to split the GPX data on gaps in distance.
+		# The application currently doesn't support splitting on distance OR time in one go.
+		# https://github.com/gpsbabel/gpsbabel/issues/379
+		# Note: This apparently does not work because you can't split an already split GPX file in GPSBabel without packing it again first.
+
+		#if not do_not_split_gpx:
+		if not 1:
+			print("Splitting GPX again on distances larger than 1000 meters.")
+			for gps_file in resulting_gps_files:
+				base_name = gps_file.split('/')[-1]
 				base_name_no_ext = ''.join(base_name.split('.')[0:-1])
-				print(fit_file)
-				path_to_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '.gpx')
+				path_to_split_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '-split.gpx')
 				gpsbabel_args = [
-					'-i garmin_fit',		# Input format
+					'-i gpx',				# Input format
 					'-f',					# Input file
-					fit_file,
-					'-x track,pack,split=4h,title="LOG # %c"',	# Split activities if gap is larger than 4 hours
+					gps_file,
+					'-x track,sdistance=1000m,title="LOG # %c"', # Split if gap is larger than 1000 meters
 					'-o gpx,garminextensions=1',				# Output format GPX with Garmin extensions
 					'-F',					# Output file
-					'"' + path_to_gpx + '"'
+					'"' + path_to_split_gpx + '"'
 				]
-				fit_convert_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
-				fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
-				# If we use move, MacOS will attempt to copy file permissions.
-				# On Garmin devices, FIT files are shown with permissions of 777.
-				# Since the executable permission is set, MacOS will try to apply that, which will fail due to system protection measures.
-				# Trying to change the permissions on the source file in place will have no result.
-				# So we use copyfile instead, which does not attempt to set equivalent permissions, then remove the source file afterwards.
-				shutil.copyfile(fit_file, os.path.join(archive_path, base_name))
-				os.remove(fit_file)
-				resulting_gps_files.append(path_to_gpx)
-			print("Converted " + str(len(fit_files)) + " FIT files to GPX.")
-
-			# Now that we're created GPX files, we invoke GPSBabel again to split the GPX data on gaps in distance.
-			# The application currently doesn't support splitting on distance OR time in one go.
-			# https://github.com/gpsbabel/gpsbabel/issues/379
-
-			if not do_not_split_gpx:
-				print("Splitting GPX again on distances larger than 1000 meters.")
-				for gps_file in resulting_gps_files:
-					base_name = gps_file.split('/')[-1]
-					base_name_no_ext = ''.join(base_name.split('.')[0:-1])
-					path_to_split_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '-split.gpx')
-					gpsbabel_args = [
-						'-i gpx',				# Input format
-						'-f',					# Input file
-						gps_file,
-						'-x track,pack,split=1000m,title="LOG # %c"', # Split if gap is larger than 1000 meters
-						'-o gpx,garminextensions=1',				# Output format GPX with Garmin extensions
-						'-F',					# Output file
-						'"' + path_to_split_gpx + '"'
-					]
-					gpx_split_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
-					gpx_split_out = subprocess.check_output(gpx_split_cmd, shell=True)
-					os.remove(gps_file)
+				gpx_split_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
+				gpx_split_out = subprocess.check_output(gpx_split_cmd, shell=True)
+				os.remove(gps_file)
 
 	#
 	# Phase 2: Import new CR files from camera card device (and convert to DNG)
@@ -185,16 +190,19 @@ def main(argv):
 		if os.path.isdir(config['card_volume']):
 			print("Found card path.")
 			# Make sure the archive folder on the card exists
-			if not os.path.isdir(card_archive_folder):
-				mkdir_out = subprocess.check_output("mkdir \"" + card_archive_folder + "\"", shell=True)
-				if not os.path.isdir(card_archive_folder):
-					print("Cannot create image archive path " + card_archive_folder + " .")
+			if not os.path.isdir(photo_card_archive_folder):
+				mkdir_out = subprocess.check_output("mkdir \"" + photo_card_archive_folder + "\"", shell=True)
+				if not os.path.isdir(photo_card_archive_folder):
+					print("Cannot create image archive path " + photo_card_archive_folder + " .")
 					exit()
 				else:
-					print("Created image archive path " + card_archive_folder + " .")
+					print("Created image archive path " + photo_card_archive_folder + " .")
 
 			# Look for CR files on the card
-			card_files_list = look_for_files(config['card_volume'] + "/DCIM/*/*.CR2") + look_for_files(config['card_volume'] + "/DCIM/*/*.CR3")
+			card_files_list = look_for_files([
+				config['card_volume'] + "/DCIM/*/*.CR2",
+				config['card_volume'] + "/DCIM/*/*.CR3"
+			])
 			if len(card_files_list) > 0:
 				print("Found " + str(len(card_files_list)) + " CR files.")
 			else:
@@ -211,7 +219,10 @@ def main(argv):
 					print("Created image archive path " + local_cr_archive_folder + " .")
 
 			# Look for CR files in the folder
-			local_files_list = look_for_files(config['local_cr_folder'] + "/*.CR2") + look_for_files(config['local_cr_folder'] + "/*.CR3")
+			local_files_list = look_for_files([
+				config['local_cr_folder'] + "/*.CR2",
+				config['local_cr_folder'] + "/*.CR3"
+			])
 			if len(local_files_list) > 0:
 				print("Found " + str(len(local_files_list)) + " CR files.")
 			else:
@@ -302,7 +313,7 @@ def main(argv):
 					target_file_exif_data[exif_bits['target_file_pathname']] = exif_bits
 
 					if from_card:
-						archive_path = os.path.join(card_archive_folder, exif_bits['date_as_str'])
+						archive_path = os.path.join(photo_card_archive_folder, exif_bits['date_as_str'])
 						if not os.path.isdir(archive_path):
 							os.makedirs(archive_path)
 					else:

@@ -21,15 +21,24 @@ def read_config():
 
 
 # Support function to look for files on a given path
+# Can be passed a string, a path, of a list of strings/paths
 def look_for_files(p):
-	try:
-		ls_out = subprocess.check_output("ls " + p, shell=True)
-		ls_out_str = codecs.utf_8_decode(ls_out)[0]
-		files_list = ls_out_str.split("\n")
-		files_list = [f for f in files_list if len(f) > 4]
-	except subprocess.CalledProcessError:
-		files_list = []
-	return files_list
+	if isinstance(p, list):
+		folders_to_check = p
+	else:
+		folders_to_check = [p]
+
+	complete_file_list = []
+	for folder in folders_to_check:
+		try:
+			ls_out = subprocess.check_output("ls " + folder, shell=True)
+			ls_out_str = codecs.utf_8_decode(ls_out)[0]
+			ls_list = ls_out_str.split("\n")
+			files_list = [f for f in ls_list if len(f) > 4]
+		except subprocess.CalledProcessError:
+			files_list = []
+		complete_file_list = complete_file_list + files_list
+	return complete_file_list
 
 
 # Subclass of tzinfo swiped mostly from dateutil
