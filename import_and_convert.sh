@@ -5,12 +5,14 @@ import getopt
 import codecs
 import shutil
 import subprocess
-import gpxpy
 import json
 import hashlib
-from common_utils import *
 from datetime import datetime, tzinfo, timedelta
 import math
+import gpxpy
+
+from common_utils import *
+from gps_utils import get_date_ranges_in_gpx_file, get_basic_points_from_gpx_file, BasicGpsPoint, GpsPointWithEcef, GpsLeg
 
 #
 # Customize config.xml before using!
@@ -415,7 +417,7 @@ def main(argv):
 				exif_id_embed_out = subprocess.check_output(exif_id_embed_cmd, shell=True)
 
 	#
-	# Phase 4: Fetch a list of recent short comments from the Poking Things With Sticks blog
+	# Phase 4: Fetch a list of recent short comments from the Mile42 blog
 	#          and embed them in any photos that are a reasonable timestamp match.
 
 	if len(found_list) < 1:
@@ -505,38 +507,14 @@ def main(argv):
 	print("Found " + str(len(gpx_list)) + " GPX files.")
 
 	# Parse the GPX files to find their earliest timepoint and latest timepoint.
-	gpx_files_stats = {}
 	valid_gps_files = []
 	for gpx_file in gpx_list:
-		earliest_start = None
-		latest_end = None
-		with open(gpx_file, 'r') as gpx_file_handle:
-			gpx = gpxpy.parse(gpx_file_handle)
-			for track in gpx.tracks:
-				start_time, end_time = track.get_time_bounds()
-				if (earliest_start is None) or (start_time < earliest_start):
-					earliest_start = start_time
-				if (latest_end is None) or (end_time > latest_end):
-					latest_end = end_time
-
-		diags = ''
-		# If the range looks funny, print a notice.  Otherwise, save the file and range in a dictionary.
-		if earliest_start.year < 1980 or earliest_start.year > 2030 or latest_end.year < 1980 or latest_end.year > 2030:
-			diags = "   (Bad range, won\'t use.)"
-		else:
-			stats = {}
-			tz_utc = fancytzutc()
-			earliest_start = earliest_start.replace(tzinfo=tz_utc)
-			latest_end = latest_end.replace(tzinfo=tz_utc)
-			# Create an object of a tzinfo-derived class to hold the time zone info,
-			# as required by datetime.
-			stats['start'] = earliest_start
-			stats['end'] = latest_end
-			gpx_files_stats[gpx_file] = stats
-			valid_gps_files.append(gpx_file)
-
-		print(gpx_file + ":\t  Start: " + pretty_datetime(earliest_start) + "   End: " + \
-				pretty_datetime(latest_end) + diags)
+		[start_date, end_date] = get_date_ranges_in_gpx_file(gpx_file)
+		print(gpx_file + ":\t  Start: " + pretty_datetime(start_date) + "   End: " + \
+				pretty_datetime(end_date))
+		if start_date.year < 1980 or start_date.year > 2030 or end_date.year < 1980 or end_date.year > 2030:
+			print("   (Bad range, won\'t use.)")
+		valid_gps_files.append(gpx_file)
 
 	if len(valid_gps_files) < 1:
 		print("No GPX files have valid date ranges.  Skipping geotag stage.")
@@ -547,44 +525,72 @@ def main(argv):
 	# Of course, if we've somehow recorded two tracks for the same time period in very different locations,
 	# this will make a mess.  But this is a single-user script and that situation is beyond the design spec.
 
-	all_gpx_points = []
-	prev_el = None
-	prev_speed = None
-
+	all_gpx_points:list[BasicGpsPoint] = []
 	for gpx_file in valid_gps_files:
-		gpx = gpxpy.parse(open(gpx_file, 'r'))
-		for track_idx, track in enumerate(gpx.tracks):		
-			for seg_idx, segment in enumerate(track.segments):
-				segment_length = segment.length_3d()
-				for point_idx, point in enumerate(segment.points):
-					p = {}
-					tz_utc = fancytzutc()
-					t_utc = point.time.replace(tzinfo=tz_utc)
-					p['t'] = t_utc
-					p['lat'] = point.latitude
-					p['lon'] = point.longitude
-					p['el'] = point.elevation
-					p['spd'] = segment.get_speed(point_idx)
-					p['op'] = point
-					
-					# Elevation and speed might be unset, so take them from the previous point, if one exists.
-					if p['el'] is not None:
-						prev_el = p['el']
-					elif prev_el is not None:
-						p['el'] = prev_el
-					if p['spd'] is not None:
-						prev_speed = p['spd']
-					elif prev_speed is not None:
-						p['spd'] = prev_speed
-
-					# If we could not set elevation or speed (if this is the 0th point) reject the point entirely.
-					if (p['spd'] is not None) and (p['el'] is not None):
-						all_gpx_points.append(p)
-						last_point = p
+		basic_points = get_basic_points_from_gpx_file(gpx_file)
+		all_gpx_points += basic_points
 
 	print("Sorting " + str(len(all_gpx_points)) + " GPX points.")
 
-	sorted_gpx_points = sorted(all_gpx_points, key=lambda x: x['t'], reverse=False)
+	sorted_gpx_points = sorted(all_gpx_points, key=lambda x: x.time, reverse=False)
+
+	# Average the position and speed values of points within a rolling six-second window.
+
+	smoothed_gpx_points: list[BasicGpsPoint] = []
+	# A pool of all previously seen points that are within 6.01 seconds
+	# of the current point (including the current point).
+	point_pool: list[BasicGpsPoint] = []
+	smoothing_range = timedelta(seconds=6)
+	i = 0
+	# We will be handling all these attributes the same way
+	attributes_to_smooth = ['lat', 'lon', 'elevation', 'speed']
+	while i < len(sorted_gpx_points):
+		current_point = sorted_gpx_points[i]
+		i += 1
+
+		cur_time = current_point.time
+
+		point_pool.append(current_point)
+		# Drop any point older than 6.01 seconds.
+		# This way, large gaps in the recorded data halt the smoothing effect.
+		filtered_pool = []
+		for p in point_pool:
+			if abs(cur_time - p.time) < smoothing_range:
+				filtered_pool.append(p)
+		point_pool = filtered_pool
+		# Start with a template point that has all the
+		# attributes we wish to smooth zeroed out.
+		
+		smoothed_point = BasicGpsPoint(
+			time = cur_time,
+			lat = 0.0,
+			lon = 0.0,
+			elevation = 0.0,
+			speed = 0.0,
+			original_point = current_point.original_point
+		)
+		
+		total_multiplier = 0
+		# Add each point's attributes to the template point, multiplying them
+		# first by a 'force multiplier' based on the distance in time from the current point.
+		# The more distant the time (up to 6 seconds) the lower the force multiplier.
+		for p in point_pool:
+			this_multiplier = (timedelta(seconds=7) - (cur_time - p.time)).total_seconds()
+			total_multiplier += this_multiplier
+			for measurement_type in attributes_to_smooth:
+				setattr(smoothed_point, measurement_type, getattr(smoothed_point, measurement_type) + getattr(p, measurement_type) * this_multiplier)
+		# Divide the template attributes by the total force multiplier applied,
+		# to get values that make sense.  Basically, the new current point is like the
+		# old current point except it has ~6 seconds of "drag" applied to it.
+		for measurement_type in attributes_to_smooth:
+			setattr(smoothed_point, measurement_type, getattr(smoothed_point, measurement_type) / total_multiplier)
+		smoothed_gpx_points.append(smoothed_point)
+
+	# Calculate ECEF coordinates for all points, so they can be compared in 3D space.
+
+	smoothed_points_with_ecef: list[GpsPointWithEcef] = []
+	for pt in smoothed_gpx_points:
+		smoothed_points_with_ecef.append(GpsPointWithEcef(basic_point=pt))
 
 	#
 	# Phase 6: Examine all DNG files without GPS tags, and tag them if possible.
@@ -615,8 +621,8 @@ def main(argv):
 				photo_dt = exif_bits['date_and_time_as_datetime'] + time_offset_for_photo_locations
 				i = 0
 				found_highpoint = False
-				while i < len(sorted_gpx_points) and not found_highpoint:
-					if sorted_gpx_points[i]['t'] > photo_dt:
+				while i < len(smoothed_points_with_ecef) and not found_highpoint:
+					if smoothed_points_with_ecef[i].time > photo_dt:
 						found_highpoint = True
 					else:
 						i += 1
@@ -625,16 +631,19 @@ def main(argv):
 				# To ensure a decent GPS read, we want a
 				# location that has at least two points on either side,
 				# each within the specified maximum gap size of its neighbors.
-				if i > 1 and i < (len(sorted_gpx_points)-1):
+				if i > 1 and i < (len(smoothed_points_with_ecef)-1):
 					found_midpoint = True
 				if not found_midpoint:
 					print(exif_bits['file_name_no_ext'] + ": No points within range.")
 				else:
-					photo_time_delta = photo_dt - sorted_gpx_points[i-1]['t']
+					p_prev = smoothed_points_with_ecef[i-1]
+					p_this = smoothed_points_with_ecef[i]
+					p_next = smoothed_points_with_ecef[i+1]
+					photo_time_delta = photo_dt - p_prev.time
 					gap = timedelta(seconds=int(config['maximum_gps_time_difference_from_photo']))
-					delta_during = sorted_gpx_points[i]['t'] - sorted_gpx_points[i-1]['t']
-					delta_before = sorted_gpx_points[i-1]['t'] - sorted_gpx_points[i-2]['t']
-					delta_after = sorted_gpx_points[i+1]['t'] - sorted_gpx_points[i]['t']
+					delta_during = p_this.time - p_prev.time
+					delta_before = p_prev.time - smoothed_points_with_ecef[i-2].time
+					delta_after = p_next.time - p_this.time
 					if delta_during > gap or delta_before > gap or delta_after > gap:
 						print(exif_bits['file_name_no_ext'] + ": Falls on a gap larger than 15 minutes.")
 					else:
@@ -643,17 +652,17 @@ def main(argv):
 						# and are allowed a negative range, e.g. -180 to 180 for longitude.
 
 						# Calculate the delta for the latitude, longitude, and elevation.
-						lat_start = sorted_gpx_points[i-1]['lat']
-						lon_start = sorted_gpx_points[i-1]['lon']
-						el_start = sorted_gpx_points[i-1]['el']
-						lat_delta = sorted_gpx_points[i]['lat'] - lat_start
-						lon_delta = sorted_gpx_points[i]['lon'] - lon_start
-						el_delta = sorted_gpx_points[i]['el'] - el_start
+						lat_start = p_prev.lat
+						lon_start = p_prev.lon
+						el_start = p_prev.elevation
+						lat_delta = p_this.lat - lat_start
+						lon_delta = p_this.lon - lon_start
+						el_delta = p_this.elevation - el_start
 
 						# Find a mid-point for the photo, interpolating based on the time.
-						lat_calc = sorted_gpx_points[i-1]['lat']
-						lon_calc = sorted_gpx_points[i-1]['lon']
-						el_calc = sorted_gpx_points[i-1]['el']
+						lat_calc = p_prev.lat
+						lon_calc = p_prev.lon
+						el_calc = p_prev.elevation
 						time_delta_s = delta_during.total_seconds()
 						photo_time_delta_s = photo_time_delta.total_seconds()
 						# If the interval, or the offset from the start point, are zero, just take the start point.
@@ -699,130 +708,15 @@ def main(argv):
 						exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 	#
-	# Phase 7: Use current stock of GPX data to generate embeddable data for an inline map
-	#          and an inline jsChart, broken across gaps in recording larger than six hours
+	# Phase 7: Use current stock of GPX data to generate a set of GPS journeys, composed of one or more legs,
+	#          broken across gaps in recording larger than six hours,
+	#          or gaps in distance larger than 1000 meters.
 
 	# The "larger than six hour break" rule is needed because the beginning and ending of each day
 	# will change based on the time zone, so breaking across days is cumbersome, especially
 	# if the rider rides past midnight.
 
-	if not os.path.isdir(config['chart_output_folder']):
-		print("Cannot find chart output path " + config['chart_output_folder'] + " .")
-		exit()
-
-	# Average the position and speed values of all points,
-	# based on whatever points were recorded during the previous six seconds.
-
-	smoothed_gpx_points = []
-	# A pool of all previously seen points that are within 6.01 seconds
-	# of the current point (including the current point).
-	point_pool = []
-	smoothing_range = timedelta(seconds=6)
-	i = 0
-	# We will be handling all these attributes the same way
-	types_to_smooth = ['lat', 'lon', 'el', 'spd']
-	while i < len(sorted_gpx_points):
-		current_point = sorted_gpx_points[i]
-		i += 1
-
-		cur_time = current_point['t']
-
-		point_pool.append(current_point);
-		# Drop any point older than 6.01 seconds.
-		# This way, large gaps in the recorded data halt the smoothing effect.
-		filtered_pool = []
-		for p in point_pool:
-			if abs(cur_time - p['t']) < smoothing_range:
-				filtered_pool.append(p)
-		point_pool = filtered_pool
-		# Start with a template point that has all the
-		# attributes we wish to smooth zeroed out.
-		smoothed_point = {
-			't': cur_time,
-			'lat': 0.0,
-			'lon': 0.0,
-			'el': 0.0,
-			'spd': 0.0,
-			'op': current_point['op']
-		}
-		total_multiplier = 0
-		# Add each point's attributes to the template point, multiplying them
-		# first by a 'force multiplier' based on the distance in time from the current point.
-		# The more distant the time (up to 6 seconds) the lower the force multiplier.
-		for p in point_pool:
-			this_multiplier = (timedelta(seconds=7) - (cur_time - p['t'])).total_seconds()
-			total_multiplier += this_multiplier
-			for measurement_type in types_to_smooth:
-				smoothed_point[measurement_type] += p[measurement_type] * this_multiplier;
-		# Divide the template attributes by the total force multiplier applied,
-		# to get values that make sense.  Basically, the new current point is like the
-		# old current point except it has ~6 seconds of "drag" applied to it.
-		for measurement_type in types_to_smooth:
-			smoothed_point[measurement_type] = smoothed_point[measurement_type] / total_multiplier;
-		smoothed_gpx_points.append(smoothed_point);
-
-	# Calculate all points as ECEF coordinates so they can be compared in 3D space.
-
-	# WGS-84 ellipsoid constants
-	WGS84_A = 6378137.0          # Semi-major axis (meters)
-	WGS84_F = 1 / 298.257223563  # Flattening
-	WGS84_E2 = WGS84_F * (2 - WGS84_F)  # Square of eccentricity
-	for pt in smoothed_gpx_points:
-		lat = pt['lat']
-		lon = pt['lon']
-		alt_m = pt['el']
-
-		# Convert degrees to radians
-		lat_rad = math.radians(lat)
-		lon_rad = math.radians(lon)
-
-		# Prime vertical radius of curvature
-		N = WGS84_A / math.sqrt(1 - WGS84_E2 * math.sin(lat_rad)**2)
-
-		# Calculate ECEF coordinates
-		pt['x'] = (N + alt_m) * math.cos(lat_rad) * math.cos(lon_rad)
-		pt['y'] = (N + alt_m) * math.cos(lat_rad) * math.sin(lon_rad)
-		pt['z'] = (N * (1 - WGS84_E2) + alt_m) * math.sin(lat_rad)
-
-	# Eliminate any points that are less than five meters from the previous point
-
-	reduced_gpx_points = []
-	skipped_gps_points = []
-	previous_good_point = None
-	i = 0
-	while i < len(smoothed_gpx_points):
-		pt = smoothed_gpx_points[i]
-		i += 1
-
-		x = pt['x']
-		y = pt['y']
-		z = pt['z']
-
-		if previous_good_point is None:
-			previous_good_point = [x, y, z]
-			reduced_gpx_points.append(pt)
-			continue
-
-		distance = math.sqrt(
-            (previous_good_point[0] - x) ** 2 +
-            (previous_good_point[1] - y) ** 2 +
-            (previous_good_point[2] - z) ** 2
-        )
-
-		if distance < 5.0:
-			skipped_gps_points.append(pt)
-			continue
-
-		previous_good_point = [x, y, z]
-		reduced_gpx_points.append(pt)
-
-	if len(sorted_gpx_points) > 0:
-		percentage_reduced = (len(sorted_gpx_points) - len(reduced_gpx_points)) / len(sorted_gpx_points) * 100
-		print("Skipped " + str(len(skipped_gps_points)) + " points that were too close, for a {:.2f}%".format(percentage_reduced) + " reduction.")
-
-	# Break all our GPX data into continuous chunks defined by gaps larger than six hours, or distcontinuities in distance larger than 1000 meters.
-
-	continuous_ranges = []
+	legs: list[GpsLeg] = []
 	smallest_allowable_distance_gap = 1000.0  # meters
 	if do_not_split_gpx:
 		smallest_allowable_time_gap = timedelta(hours=60000)
@@ -830,107 +724,104 @@ def main(argv):
 		smallest_allowable_time_gap = timedelta(hours=6)
 
 	this_range_start = 0
-	prev_time = reduced_gpx_points[0]['t']
-	prev_location = [reduced_gpx_points[0]['x'], reduced_gpx_points[0]['y'], reduced_gpx_points[0]['z']]
+	prev_point = smoothed_points_with_ecef[0]
+	leg_point_accumulator = []
+	supplemental = False
+	next_is_supplemental = False
 	i = 1
 
-	while i < len(reduced_gpx_points):
-		pt = reduced_gpx_points[i]
+	while i < len(smoothed_points_with_ecef):
+		pt = smoothed_points_with_ecef[i]
 
-		cur_time = pt['t']
-		time_delta = cur_time - prev_time
+		cur_time = pt.time
+		time_delta = cur_time - prev_point.time
 
-		x = pt['x']
-		y = pt['y']
-		z = pt['z']
+		distance = pt.distance_from(prev_point)
 
-		distance = math.sqrt(
-			(prev_location[0] - x) ** 2 +
-			(prev_location[1] - y) ** 2 +
-			(prev_location[2] - z) ** 2
-		)
+		start_of_new_leg = False
 
-		# If the gap betewen this point and the last is larger than smallest_allowable_time_gap,
+		# If the gap between this point and the last is larger than smallest_allowable_time_gap,
 		# or if the distance between this point and the last is larger than smallest_allowable_distance_gap,
 		# declare a new range
-		new_range = False
-		treat_as_leg = False
-
 		if time_delta > smallest_allowable_time_gap:
-			print("Found a time gap of {} hours at between time {} and {}".format(time_delta.total_seconds() / 3600, pretty_datetime(prev_time), pretty_datetime(cur_time)))
-			new_range = True
+			print("Found a time gap of {} hours at between time {} and {}".format(time_delta.total_seconds() / 3600, pretty_datetime(prev_point.time), pretty_datetime(cur_time)))
+			start_of_new_leg = True
+			next_is_supplemental = False
 		elif distance > smallest_allowable_distance_gap:
-			print("Found a distance gap of {:.2f} meters between time {} and {}".format(distance, pretty_datetime(prev_time), pretty_datetime(cur_time)))
-			new_range = True
-			# If the current point has a gap in space but not time, we treat the range we're about to declare as a leg.
-			treat_as_leg = True
+			print("Found a distance gap of {:.2f} meters between time {} and {}".format(distance, pretty_datetime(prev_point.time), pretty_datetime(cur_time)))
+			start_of_new_leg = True
+			# If the current point has a gap in space but not time, we treat the leg we're about to declare as supplemental to the last one.
+			next_is_supplemental = True
 
-		prev_time = cur_time
-		prev_location = [x, y, z]
+		prev_point = pt
 
-		if new_range:
+		if start_of_new_leg:
 			# Runs less than 60 samples are ignored
-			if (i - this_range_start) > 60:
-				new_range = {}
-				new_range['start'] = this_range_start
-				new_range['end'] = i-1
-				new_range['treat_as_leg'] = treat_as_leg
-				continuous_ranges.append(new_range)
-			this_range_start = i
+			if len(leg_point_accumulator) > 60:
+				new_leg = GpsLeg(
+					points = leg_point_accumulator,
+					supplemental = supplemental
+				)
+				legs.append(new_leg)
+			supplemental = next_is_supplemental
+			leg_point_accumulator = []
+		leg_point_accumulator.append(pt)
 		i += 1
-	if i > 1:
-		if (i - this_range_start) > 60:
-			new_range = {}
-			new_range['start'] = this_range_start
-			new_range['end'] = i-1
-			new_range['treat_as_leg'] = False
-			continuous_ranges.append(new_range)
-	print("Found " + str(len(continuous_ranges)) + " continuous ranges.")
+	# Deal with what remains on the accumulator
+	if len(leg_point_accumulator) > 60:
+		new_leg = GpsLeg(
+			points = leg_point_accumulator,
+			supplemental = supplemental
+		)
+		legs.append(new_leg)
+	print("Found " + str(len(legs)) + " continuous ranges.")
 
-	# Turn each range into a minimal JSON data format, breaking each type of data out
-	# into separate arrays to eliminate the redundant field names
+	# Now let's create a "reduced" set of points for each range.
+	# This is the data we'll use for embedding in the site.
 
-	for r in continuous_ranges:
-		lat = []
-		lon = []
-		el = []
-		t = []
-		t_quoted = []
-		spd = []
-		i = r['start']
-		while i <= r['end']:
-			pt = reduced_gpx_points[i]
-			lat.append(str(pt['lat']))
-			lon.append(str(pt['lon']))
-			el.append(str(pt['el']))
-			t.append(pt['t'].isoformat())
-			t_quoted.append('"' + pt['t'].isoformat() + '"')
-			spd.append(str(pt['spd']))
-			i += 1
+	reduced_legs = []
+	total_original_point_count = 0
+	total_reduced_point_count = 0
 
-		range_json_str = "{" + \
-						'"lat":[' + ','.join(lat) + "]," + \
-						'"lon":[' + ','.join(lon) + "]," + \
-						'"el":[' + ','.join(el) + "]," + \
-						'"t":[' + ','.join(t_quoted) + "]," + \
-						'"spd":[' + ','.join(spd) + "]" + \
-						"}"
-		r['identifier'] = reduced_gpx_points[r['start']]['t'].isoformat()
-		r['json_str'] = range_json_str
+	for leg in legs:
+		reduced_leg = leg.make_reduced_version(minimum_distance = 5.0)
+		reduced_legs.append(reduced_leg)
+		
+		total_original_point_count += len(leg.points)
+		total_reduced_point_count += len(reduced_leg.points)
 
-	# Collect ranges that have gaps in space but not time, as legs in the same ride.
+	difference = total_original_point_count - total_reduced_point_count
+	if difference > 0:
+		percentage_reduced = (difference / total_original_point_count) * 100
+		print("Skipped " + str(difference) + " points that were too close, for a {:.2f}%".format(percentage_reduced) + " reduction.")
+
+	# Collect legs that are identified as supplemental into the same ride.
 
 	rides = []
 	current_ride = []
 	ride_identifier = None
-	for r in continuous_ranges:
-		range_json = r['json_str']
+	i = 0
+	while i < len(legs):
+		leg = legs[i]
+		reduced_leg = reduced_legs[i]
+		print("Ride " + str(i) + " supplemental: " + str(reduced_leg.supplemental))
+		if not reduced_leg.supplemental:
+			if len(current_ride) > 0:
+				rides.append({
+					'identifier': ride_identifier,
+					'legs': current_ride})
+				current_ride = []
 		if len(current_ride) == 0:
-			ride_identifier = r['identifier']
-		current_ride.append(range_json)
-		if not r['treat_as_leg']:
-			rides.append([ride_identifier, current_ride])
-			current_ride = []
+			ride_identifier = leg.identifier
+		current_ride.append({
+			'full': leg,
+			'reduced': reduced_leg})
+		i += 1
+	if len(current_ride) > 0:
+		rides.append({
+			'identifier': ride_identifier,
+			'legs': current_ride})
+		current_ride = []
 
 	# Write the ranges out to an HTML gallery and a JSON file.
 
@@ -946,16 +837,28 @@ def main(argv):
 	gallery_json = []
 
 	for r in rides:
-		ride_identifier = r[0]
+		ride_identifier = r['identifier']
 
-		legs = r[1]
-		range_json_str = legs[0]
+		legs = r['legs']
+
+		date_start = legs[0]['full'].start_time
+		date_end = legs[-1]['full'].end_time
+		gps_start_point_latitude = legs[0]['full'].points[0].lat
+		gps_start_point_longitude = legs[0]['full'].points[0].lon
+
 		if len(legs) > 1:
-			range_json_str = '{"legs":[' + ','.join(legs) + ']}'
-	
-		cofh.write("<div class='ptws-ride-log' rideid=" + '"' + r[0] + '"' + ">\n<div class='data'>")
+			reduced_gps_data = {
+				'legs': [leg['reduced'].as_compact_json() for leg in legs],
+				'distance_meters': sum(leg['reduced'].distance_meters for leg in legs),
+				'duration_seconds': sum(leg['reduced'].duration_seconds for leg in legs)
+			}
+		else:
+			reduced_gps_data = legs[0]['reduced'].as_compact_json()
+
+		cofh.write("<div class='ptws-ride-log' rideid=" + '"' + ride_identifier + '"' + ">\n<div class='data'>")
 		# We write this JSON structure out twice:
 		# Once in the HTML file to display the routes in a gallery,
+		range_json_str = json.dumps(reduced_gps_data)
 		cofh.write(range_json_str)
 		cofh.write("</div>\n</div>\n")
 		# and once in a JSON file that we use as reference material for uploading the routes to the web
