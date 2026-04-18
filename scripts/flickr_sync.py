@@ -2,25 +2,23 @@
 
 import os, sys, re
 import getopt
-import codecs
-import shutil
-import subprocess
 import flickrapi
+from pathlib import Path
+from dotenv import load_dotenv
+
 from common_utils import *
-from datetime import datetime, tzinfo, timedelta
-from xml.etree import ElementTree
 
 #
-# Customize config.xml before using!
+# Customize .env before using!
 #
 
 
-def check_all_paths(config):
-	if not os.path.exists(config['exiftool']):
+def check_all_paths():
+	if not os.path.exists(os.getenv('EXIF_TOOL')):
 		print("Install exiftool with \"brew install exiftool\", please.")
 		return False
-	if not os.path.isdir(config['flickr_sync_folder']):
-		print("Cannot find flickr_sync_folder at: " + config['flickr_sync_folder'] + " .")
+	if not os.path.isdir(os.getenv('FLICKR_SYNC_FOLDER')):
+		print("Cannot find flickr_sync_folder at: " + os.getenv('FLICKR_SYNC_FOLDER') + " .")
 		return False
 	return True
 
@@ -39,12 +37,12 @@ def main(argv):
 		if opt in ("-f", "--forcereplace"):
 			force_replace = True
 
-	config = read_config()
-	if config is None:
-		print('Error reading your config.xml file!')
-		sys.exit(2)
+	# Build paths inside the project like this: BASE_DIR / 'subdir'.
+	BASE_DIR = Path(__file__).resolve().parent.parent
 
-	if check_all_paths(config) == False:
+	load_dotenv(BASE_DIR / '.env')  # Load environment variables from a .env file if present
+
+	if check_all_paths() == False:
 		sys.exit()
 
 	# Save any target file EXIF data we read for later so we don't need to read it twice.
@@ -54,7 +52,7 @@ def main(argv):
 	# Phase 1: Locate any files in the sync folder and get their EXIF info
 	#
 
-	jpg_list = look_for_files(config['flickr_sync_folder'] + "/*.jpg")
+	jpg_list = look_for_files(os.getenv('FLICKR_SYNC_FOLDER') + "/*.jpg")
 	if len(jpg_list) < 1:
 		print("No JPG files found in sync folder.")
 	else:
@@ -62,7 +60,7 @@ def main(argv):
 
 		for jpg_file in jpg_list:
 
-			exif_bits = get_exif_bits_from_file(config['exiftool'], jpg_file)
+			exif_bits = get_exif_bits_from_file(os.getenv('EXIF_TOOL'), jpg_file)
 			if exif_bits['has_gps']:
 				has_gps_str = 'Has GPS'
 			else:
@@ -88,11 +86,11 @@ def main(argv):
 	print("\nConnecting to Flickr.")
 
 	# initialize
-	flickr = flickrapi.FlickrAPI(config['flickr_api_key'], config['flickr_api_secret'], format='parsed-json')
+	flickr = flickrapi.FlickrAPI(os.getenv('FLICKR_API_KEY'), os.getenv('FLICKR_API_SECRET'), format='parsed-json')
 	flickr.authenticate_via_browser(perms='write')
 
 	# Look up account info by email address
-	rsp = flickr.people.findByEmail(api_key=config['flickr_api_key'], find_email=config['flickr_account_email'])
+	rsp = flickr.people.findByEmail(api_key=os.getenv('FLICKR_API_KEY'), find_email=os.getenv('FLICKR_ACCOUNT_EMAIL'))
 	print("Response: %s" % repr(rsp))
 	flickr_user_id = rsp['user']['id']
 
@@ -104,16 +102,16 @@ def main(argv):
 
 	matching_set = None
 	for one_set in photosets['photoset']:
-		if one_set['title']['_content'] == config['flickr_album_to_add_to']:
+		if one_set['title']['_content'] == os.getenv('FLICKR_ALBUM_TO_ADD_TO'):
 			matching_set = one_set
 			break
 
 	if matching_set is None:
-		print("Could not find an album on Flickr with name \"%s\"" % config['flickr_album_to_add_to'])
+		print("Could not find an album on Flickr with name \"%s\"" % os.getenv('FLICKR_ALBUM_TO_ADD_TO'))
 		sys.exit(2)
 
 	working_album_id = matching_set['id']
-	print("Working album is \"%s\", with ID %s\n" % (config['flickr_album_to_add_to'], working_album_id))
+	print("Working album is \"%s\", with ID %s\n" % (os.getenv('FLICKR_ALBUM_TO_ADD_TO'), working_album_id))
 
 	#
 	# Phase 3: Check for matching photos on Flickr
@@ -188,7 +186,7 @@ def main(argv):
 		if e['has_description']:
 			description = e['Description']
 		response = flickr.upload(
-			api_key = config['flickr_api_key'],
+			api_key = os.getenv('FLICKR_API_KEY'),
 			filename = jpg_file,
 			title = e['file_name_no_ext'],
 			description = description,
@@ -202,7 +200,7 @@ def main(argv):
 
 		photo_id = response.find('photoid').text
 		response = flickr.photosets.addPhoto(
-			api_key = config['flickr_api_key'],
+			api_key = os.getenv('FLICKR_API_KEY'),
 			photoset_id =working_album_id,
 			photo_id = photo_id
 		)

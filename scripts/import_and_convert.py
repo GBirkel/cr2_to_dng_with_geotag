@@ -1,5 +1,3 @@
-#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3
-
 import os, sys, re
 import getopt
 import codecs
@@ -7,43 +5,43 @@ import shutil
 import subprocess
 import json
 import hashlib
-from datetime import datetime, tzinfo, timedelta
-import math
-import gpxpy
+from datetime import datetime, timedelta
+from pathlib import Path
+from dotenv import load_dotenv
 
 from common_utils import *
 from gps_utils import get_date_ranges_in_gpx_file, get_basic_points_from_gpx_file, BasicGpsPoint, GpsPointWithEcef, GpsLeg
 
 #
-# Customize config.xml before using!
+# Customize .env before using!
 #
 
 
-def check_all_paths(config):
-	if not os.path.exists(config['dngconverter']):
+def check_all_paths():
+	if not os.path.exists(os.getenv('DNG_CONVERTER')):
 		print("Install the Adobe DNG converter, please.")
 		return False
-	if not os.path.exists(config['exiftool']):
+	if not os.path.exists(os.getenv('EXIF_TOOL')):
 		print("Install exiftool with \"brew install exiftool\", please.")
 		return False
-	if not os.path.exists(config['gpsbabel']):
+	if not os.path.exists(os.getenv('GPSBABEL')):
 		print("Install gpsbabel with \"brew install gpsbabel\", please.")
 		return False
-	if not os.path.isdir(config['gps_files_folder']):
-		print("Cannot find gps_files_folder at: " + config['gps_files_folder'] + " .")
+	if not os.path.isdir(os.getenv('GPS_FILES_FOLDER')):
+		print("Cannot find gps_files_folder at: " + os.getenv('GPS_FILES_FOLDER') + " .")
 		return False
-	if not os.path.isdir(config['chart_output_folder']):
-		print("Cannot find chart_output_folder folder at: " + config['chart_output_folder'] + " .")
+	if not os.path.isdir(os.getenv('CHART_OUTPUT_FOLDER')):
+		print("Cannot find chart_output_folder folder at: " + os.getenv('CHART_OUTPUT_FOLDER') + " .")
 		return False
-	if not os.path.isdir(config['dng_folder']):
-		print("Cannot find dng_folder folder at: " + config['dng_folder'] + " .")
+	if not os.path.isdir(os.getenv('DNG_FOLDER')):
+		print("Cannot find dng_folder folder at: " + os.getenv('DNG_FOLDER') + " .")
 		return False
 	return True
 
 
 # Support function to fetch a set of recent short comments from a database
-def get_recent_short_comments(config):
-	curl_command = 'curl -F key=\"' + config['api_seekrit'] + '\" ' + config['comment_fetch_url']
+def get_recent_short_comments():
+	curl_command = 'curl -F key=\"' + os.getenv('MILE42_API_SECRET') + '\" ' + os.getenv('COMMENT_FETCH_URL')
 	fetch_out_str = '[]'
 	try:
 		fetch_out = subprocess.check_output(curl_command, shell=True)
@@ -92,38 +90,37 @@ def main(argv):
 		if opt in ("-r", "--replacegps"):
 			replace_gps = True
 
-	config = read_config()
-	if config is None:
-		print('Error reading your config.xml file!')
-		sys.exit(2)
+	# Build paths inside the project like this: BASE_DIR / 'subdir'.
+	BASE_DIR = Path(__file__).resolve().parent.parent
 
-	local_cr_archive_folder = config['local_cr_folder'] + "/processed"
-	photo_card_archive_folder = config['card_volume'] + "/archived"
+	load_dotenv(BASE_DIR / '.env')  # Load environment variables from a .env file if present
 
-	time_offset_for_photo_locations = timedelta(seconds=int(config['time_offset_for_photo_locations']))
-	altitude_offset_for_photo_locations = float(config['altitude_offset_for_photo_locations'])
+	local_cr_archive_folder = os.getenv('LOCAL_CR_FOLDER') + "/processed"
+	photo_card_archive_folder = os.getenv('CARD_VOLUME') + "/archived"
 
+	time_offset_for_photo_locations = timedelta(seconds=int(os.getenv('TIME_OFFSET_FOR_PHOTO_LOCATIONS', 0)))
+	altitude_offset_for_photo_locations = float(os.getenv('ALTITUDE_OFFSET_FOR_PHOTO_LOCATIONS', 0.0))
 
-	if check_all_paths(config) == False:
+	if check_all_paths() == False:
 		sys.exit()
 
 	#
 	# Phase 1: Import new FIT files from GPS device (and convert to GPX)
 	#
 
-	folders_to_search_for_fit_files = [config['gps_files_reprocess_folder'] + "/*.fit"]
-	if os.path.exists(config['garmin_gps_volume']):
+	folders_to_search_for_fit_files = [os.getenv('GPS_FILES_REPROCESS_FOLDER') + "/*.fit"]
+	if os.path.exists(os.getenv('GARMIN_GPS_VOLUME')):
 		print("Found GPS path.")
 		folders_to_search_for_fit_files += [
-			config['garmin_gps_volume'] + "/Garmin/Activities/*.fit",	# Edge 500,530
-			config['garmin_gps_volume'] + "/Garmin/ACTIVITY/*.FIT",	# Edge 130
-			config['garmin_gps_volume'] + "/Garmin/Activity/*.fit",	# Edge 130+
+			os.getenv('GARMIN_GPS_VOLUME') + "/Garmin/Activities/*.fit",	# Edge 500,530
+			os.getenv('GARMIN_GPS_VOLUME') + "/Garmin/ACTIVITY/*.FIT",	# Edge 130
+			os.getenv('GARMIN_GPS_VOLUME') + "/Garmin/Activity/*.fit",	# Edge 130+
 		]
 	fit_files = look_for_files(folders_to_search_for_fit_files)
 	if len(fit_files) > 0:
 		# We need to move these files off the drive or the 130 will simply rename them back to ".FIT",
 		# causing them to be re-imported.
-		archive_path = os.path.join(config['gps_files_folder'], 'Processed')
+		archive_path = os.path.join(os.getenv('GPS_FILES_FOLDER'), 'Processed')
 		if not os.path.isdir(archive_path):
 			os.makedirs(archive_path)
 
@@ -132,7 +129,7 @@ def main(argv):
 			base_name = fit_file.split('/')[-1]
 			base_name_no_ext = ''.join(base_name.split('.')[0:-1])
 			print(fit_file)
-			path_to_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '.gpx')
+			path_to_gpx = os.path.join(os.getenv('GPS_FILES_FOLDER'), base_name_no_ext + '.gpx')
 			gpsbabel_args = [
 				'-i garmin_fit',		# Input format
 				'-f',					# Input file
@@ -142,7 +139,7 @@ def main(argv):
 				'-F',					# Output file
 				'"' + path_to_gpx + '"'
 			]
-			fit_convert_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
+			fit_convert_cmd = os.getenv('GPSBABEL') + " " + ' '.join(gpsbabel_args)
 			fit_conv_out = subprocess.check_output(fit_convert_cmd, shell=True)
 			# If we use move, MacOS will attempt to copy file permissions.
 			# On Garmin devices, FIT files are shown with permissions of 777.
@@ -165,7 +162,7 @@ def main(argv):
 			for gps_file in resulting_gps_files:
 				base_name = gps_file.split('/')[-1]
 				base_name_no_ext = ''.join(base_name.split('.')[0:-1])
-				path_to_split_gpx = os.path.join(config['gps_files_folder'], base_name_no_ext + '-split.gpx')
+				path_to_split_gpx = os.path.join(os.getenv('GPS_FILES_FOLDER'), base_name_no_ext + '-split.gpx')
 				gpsbabel_args = [
 					'-i gpx',				# Input format
 					'-f',					# Input file
@@ -175,7 +172,7 @@ def main(argv):
 					'-F',					# Output file
 					'"' + path_to_split_gpx + '"'
 				]
-				gpx_split_cmd = config['gpsbabel'] + " " + ' '.join(gpsbabel_args)
+				gpx_split_cmd = os.getenv('GPSBABEL') + " " + ' '.join(gpsbabel_args)
 				gpx_split_out = subprocess.check_output(gpx_split_cmd, shell=True)
 				os.remove(gps_file)
 
@@ -186,10 +183,10 @@ def main(argv):
 	card_files_list = []
 	local_files_list = []
 	# If there is a card path, make sure the archive folder exists on it, and look for CR files.
-	if (not os.path.isdir(config['card_volume'])) and (not os.path.isdir(config['local_cr_folder'])):
-		print("Cannot find card volume " + config['card_volume'] + " or local import folder.  Skipping import stage.")
+	if (not os.path.isdir(os.getenv('CARD_VOLUME'))) and (not os.path.isdir(os.getenv('LOCAL_CR_FOLDER'))):
+		print("Cannot find card volume " + os.getenv('CARD_VOLUME') + " or local import folder.  Skipping import stage.")
 	else:
-		if os.path.isdir(config['card_volume']):
+		if os.path.isdir(os.getenv('CARD_VOLUME')):
 			print("Found card path.")
 			# Make sure the archive folder on the card exists
 			if not os.path.isdir(photo_card_archive_folder):
@@ -202,14 +199,14 @@ def main(argv):
 
 			# Look for CR files on the card
 			card_files_list = look_for_files([
-				config['card_volume'] + "/DCIM/*/*.CR2",
-				config['card_volume'] + "/DCIM/*/*.CR3"
+				os.getenv('CARD_VOLUME') + "/DCIM/*/*.CR2",
+				os.getenv('CARD_VOLUME') + "/DCIM/*/*.CR3"
 			])
 			if len(card_files_list) > 0:
 				print("Found " + str(len(card_files_list)) + " CR files.")
 			else:
 				print("No CR files found on card.")
-		if os.path.isdir(config['local_cr_folder']):
+		if os.path.isdir(os.getenv('LOCAL_CR_FOLDER')):
 			print("Found local import folder.")
 			# Make sure the archive folder exists
 			if not os.path.isdir(local_cr_archive_folder):
@@ -222,8 +219,8 @@ def main(argv):
 
 			# Look for CR files in the folder
 			local_files_list = look_for_files([
-				config['local_cr_folder'] + "/*.CR2",
-				config['local_cr_folder'] + "/*.CR3"
+				os.getenv('LOCAL_CR_FOLDER') + "/*.CR2",
+				os.getenv('LOCAL_CR_FOLDER') + "/*.CR3"
 			])
 			if len(local_files_list) > 0:
 				print("Found " + str(len(local_files_list)) + " CR files.")
@@ -246,15 +243,15 @@ def main(argv):
 
 			for original in files_list:
 
-				exif_bits = get_exif_bits_from_file(config['exiftool'], original)
+				exif_bits = get_exif_bits_from_file(os.getenv('EXIF_TOOL'), original)
 
-				if config['prepend_datestamp_to_photo_files'] == 'True':
+				if os.getenv('PREPEND_DATESTAMP_TO_PHOTO_FILES') == 'True':
 					target_file = exif_bits['form_date'] + "_" + exif_bits['file_name_no_ext'] + ".dng"
 				else:
 					target_file = exif_bits['file_name_no_ext'] + ".dng"
 
 				exif_bits['target_file_name'] = target_file
-				exif_bits['target_file_pathname'] = os.path.join(config['dng_folder'], target_file)
+				exif_bits['target_file_pathname'] = os.path.join(os.getenv('DNG_FOLDER'), target_file)
 				exif_bits['gps_added'] = False
 
 				# If the target file exists AND the datestamp in the EXIF matches exactly,
@@ -264,7 +261,7 @@ def main(argv):
 					exif_bits['target_exists'] = False
 					exif_bits['already_converted'] = False
 				else:
-					texif_bits = get_exif_bits_from_file(config['exiftool'], exif_bits['target_file_pathname'])
+					texif_bits = get_exif_bits_from_file(os.getenv('EXIF_TOOL'), exif_bits['target_file_pathname'])
 					exif_bits['target_exists'] = True
 					exif_bits['target_exif'] = texif_bits
 					exif_bits['already_converted'] = exif_bits['target_exif']['form_date'] == exif_bits['form_date']
@@ -294,7 +291,7 @@ def main(argv):
 						'-cr7.1',	# Camera Raw v7.1 and up compatible (works with Aperture)
 						'-dng1.4',	# DNG file format 1.4 and up compatible (works with Aperture)
 						'-d',		# Output directory
-						"\"" + config['dng_folder'] + "\"",
+						"\"" + os.getenv('DNG_FOLDER') + "\"",
 						'-o',		# Output file
 						"\"" + exif_bits['target_file_name'] + "\"",
 						"\"" + original + "\""	# Input file is last
@@ -306,7 +303,7 @@ def main(argv):
 					# -W : Block and wait for the application to exit
 					# -a : Path to application to open
 					# --args : Everything beyond here should be passed to the application
-					conv_command = "open -j -n -W -a \"" + config['dngconverter'] + "\" --args " + ' '.join(conv_args)
+					conv_command = "open -j -n -W -a \"" + os.getenv('DNG_CONVERTER') + "\" --args " + ' '.join(conv_args)
 
 					dng_conv_output = subprocess.check_output(conv_command, shell=True)
 
@@ -338,7 +335,7 @@ def main(argv):
 	# Phase 2-b: Locate pre-existing DNG / HEIC files and read their EXIF tags as well
 	#
 
-	dng_list = look_for_files(config['dng_folder'] + "/*.dng")
+	dng_list = look_for_files(os.getenv('DNG_FOLDER') + "/*.dng")
 	if len(dng_list) < 1:
 			print("No DNG files found in target folder.")
 	else:
@@ -351,7 +348,7 @@ def main(argv):
 		for dng_file in dng_list:
 			if dng_file not in target_file_exif_data:
 
-				exif_bits = get_exif_bits_from_file(config['exiftool'], dng_file)
+				exif_bits = get_exif_bits_from_file(os.getenv('EXIF_TOOL'), dng_file)
 				if exif_bits['has_gps']:
 					has_gps_str = "   Has GPS "
 				else:
@@ -363,13 +360,13 @@ def main(argv):
 		if additional_exif_fetches > 0:
 			print("Fetched EXIF data for an additional " + str(additional_exif_fetches) + " pre-existing DNG files.")
 
-	heic_list = look_for_files(config['dng_folder'] + "/*.HEIC")
+	heic_list = look_for_files(os.getenv('DNG_FOLDER') + "/*.HEIC")
 	if len(heic_list) > 0:
 		print("Found " + str(len(heic_list)) + " HEIC files.")
 
 		additional_exif_fetches = 0
 		for heic_file in heic_list:
-			exif_bits = get_exif_bits_from_file(config['exiftool'], heic_file)
+			exif_bits = get_exif_bits_from_file(os.getenv('EXIF_TOOL'), heic_file)
 			if exif_bits['has_gps']:
 				has_gps_str = "   Has GPS "
 			else:
@@ -413,7 +410,7 @@ def main(argv):
 					'"' + image_file + '"'
 				]
 				# For some reason this fails on HEIC images.  Not sure why.
-				exif_id_embed_cmd = config['exiftool'] + " " + ' '.join(exif_id_embed_args)
+				exif_id_embed_cmd = os.getenv('EXIF_TOOL') + " " + ' '.join(exif_id_embed_args)
 				exif_id_embed_out = subprocess.check_output(exif_id_embed_cmd, shell=True)
 
 	#
@@ -433,7 +430,7 @@ def main(argv):
 			print("All DNG files have embedded comments.  Skipping comment embed stage.")
 		else:
 			print("Found " + str(len(images_without_comments)) + " DNG files without comments.")
-			comments_to_consider = get_recent_short_comments(config)
+			comments_to_consider = get_recent_short_comments()
 			if len(comments_to_consider) < 1:
 				print("No un-paired comments to consider.  Skipping comment embed stage.")
 			else:
@@ -493,14 +490,14 @@ def main(argv):
 							'-Description="' + c_formatted + '"',
 							'"' + image_file + '"'
 						]
-						exif_embed_cmd = config['exiftool'] + " " + ' '.join(exif_embed_args)
+						exif_embed_cmd = os.getenv('EXIF_TOOL') + " " + ' '.join(exif_embed_args)
 						exif_embed_out = subprocess.check_output(exif_embed_cmd, shell=True)
 
 	#
 	# Phase 5: Locate and parse all GPX files in working folder (from this or previous sessions)
 	#
 
-	gpx_list = look_for_files(config['gps_files_folder'] + "/*.gpx")
+	gpx_list = look_for_files(os.getenv('GPS_FILES_FOLDER') + "/*.gpx")
 	if len(gpx_list) < 1:
 		print("No GPX files found in gps log folder.  Skipping geotag stage.")
 		exit()
@@ -640,7 +637,7 @@ def main(argv):
 					p_this = smoothed_points_with_ecef[i]
 					p_next = smoothed_points_with_ecef[i+1]
 					photo_time_delta = photo_dt - p_prev.time
-					gap = timedelta(seconds=int(config['maximum_gps_time_difference_from_photo']))
+					gap = timedelta(seconds=int(os.getenv('MAXIMUM_GPS_TIME_DIFFERENCE_FROM_PHOTO', 900)))
 					delta_during = p_this.time - p_prev.time
 					delta_before = p_prev.time - smoothed_points_with_ecef[i-2].time
 					delta_after = p_next.time - p_this.time
@@ -704,7 +701,7 @@ def main(argv):
 							'-GPSStatus="Measurement Active"',
 							'"' + dng_file + '"'
 						]
-						exif_gps_embed_cmd = config['exiftool'] + " " + ' '.join(exif_gps_embed_args)
+						exif_gps_embed_cmd = os.getenv('EXIF_TOOL') + " " + ' '.join(exif_gps_embed_args)
 						exif_gps_embed_out = subprocess.check_output(exif_gps_embed_cmd, shell=True)
 
 	#
@@ -825,8 +822,8 @@ def main(argv):
 
 	# Write the ranges out to an HTML gallery and a JSON file.
 
-	chart_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.html')
-	json_out_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
+	chart_out_path = os.path.join(os.getenv('CHART_OUTPUT_FOLDER'), 'route_gallery.html')
+	json_out_path = os.path.join(os.getenv('CHART_OUTPUT_FOLDER'), 'route_gallery.json')
 
 	template_file_h = open("route_template.html", "r")
 	template_html = template_file_h.read()

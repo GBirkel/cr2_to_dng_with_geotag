@@ -1,23 +1,8 @@
-import os, sys, re
+import sys, re
 import codecs
-import shutil
 import subprocess
-import json, xml.dom.minidom
-import hashlib
+import json
 from datetime import datetime, tzinfo, timedelta
-
-
-# Read in the standard configuration file and return its parsed contents
-def read_config():
-	config = {}
-	if os.access("config.xml", os.F_OK):
-		config_xml = xml.dom.minidom.parse("config.xml")
-		for item in config_xml.documentElement.childNodes:
-			if item.nodeType == item.ELEMENT_NODE:
-				config[item.tagName] = item.firstChild.data
-		return config
-	else:
-		return None
 
 
 # Support function to look for files on a given path

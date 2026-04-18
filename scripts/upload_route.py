@@ -6,6 +6,9 @@ import shutil
 import subprocess
 import gpxpy
 import json
+from pathlib import Path
+from dotenv import load_dotenv
+
 from common_utils import *
 
 # We can't upload route recordings directly from the route gallery web page,
@@ -21,18 +24,18 @@ from common_utils import *
 # actually being handed a file by user interaction, for security reasons.)
 
 #
-# Customize config.xml before using!
+# Customize .env before using!
 #
 
 
 # Support function to upload a given route id and route data
-def route_upload_via_curl(config, route_id, route_body):
-	tmp_out_path = os.path.join(config['chart_output_folder'], 'temp_route_upload.txt')
+def route_upload_via_curl(route_id, route_body):
+	tmp_out_path = os.path.join(os.getenv('CHART_OUTPUT_FOLDER'), 'temp_route_upload.txt')
 	to = open(tmp_out_path, "w")
 	to.write(route_body)
 	to.close()
 
-	curl_command = 'curl -F id=\"' + route_id + '\" -F route=@' + tmp_out_path + ' -F key=\"' + config['api_seekrit'] + '\" ' + config['route_upload_url']
+	curl_command = 'curl -F id=\"' + route_id + '\" -F route=@' + tmp_out_path + ' -F key=\"' + os.getenv('MILE42_API_SECRET') + '\" ' + os.getenv('MILE42_ROUTE_UPLOAD_URL')
 	print(curl_command)
 
 	try:
@@ -61,16 +64,16 @@ def main(argv):
 		sys.exit(2)
 	print('Index to upload is ' + str(upload_index))
 
-	config = read_config()
-	if config is None:
-		print('Error reading your config.xml file!')
-		sys.exit(2)
+	# Build paths inside the project like this: BASE_DIR / 'subdir'.
+	BASE_DIR = Path(__file__).resolve().parent.parent
 
-	if not os.path.isdir(config['chart_output_folder']):
-		print("Cannot find folder chart_output_folder: " + config['chart_output_folder'] + " .")
+	load_dotenv(BASE_DIR / '.env')  # Load environment variables from a .env file if present
+
+	if not os.path.isdir(os.getenv('CHART_OUTPUT_FOLDER')):
+		print("Cannot find folder chart_output_folder: " + os.getenv('CHART_OUTPUT_FOLDER') + " .")
 		exit()
 
-	tmp_in_path = os.path.join(config['chart_output_folder'], 'route_gallery.json')
+	tmp_in_path = os.path.join(os.getenv('CHART_OUTPUT_FOLDER'), 'route_gallery.json')
 	with open(tmp_in_path, 'r') as t_file_handle:
 		tdata = json.load(t_file_handle)
 
@@ -79,7 +82,7 @@ def main(argv):
 	#	route_upload_via_curl(config, rt[0], rt[1])
 
 	rt = tdata['a'][upload_index-1]
-	route_upload_via_curl(config, rt[0], rt[1])
+	route_upload_via_curl(rt[0], rt[1])
 
 	exit()
 
